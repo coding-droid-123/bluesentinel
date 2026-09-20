@@ -59,6 +59,44 @@ CLASS_NAMES = [
     "trash_tarp", "trash_rope", "trash_net",
 ]
 
+SEVERITY_MAPPING = {
+    # Critical (severe marine entanglement & ghost gear)
+    "trash_net": "critical",
+    "trash_rope": "critical",
+    "trash_tarp": "critical",
+
+    # High (non-biodegradable plastics & chemical leaching)
+    "trash_bottle": "high",
+    "trash_bag": "high",
+    "trash_container": "high",
+    "trash_snack_wrapper": "high",
+    "trash_cup": "high",
+    "trash_pipe": "high",
+    "trash_wreckage": "high",
+
+    # Medium (metals, fabrics, general artificial debris)
+    "trash_can": "medium",
+    "trash_clothing": "medium",
+    "trash_unknown_instance": "medium",
+
+    # Low (natural biodegradable materials, organisms & equipment)
+    "trash_branch": "low",
+    "rov": "low",
+    "plant": "low",
+    "animal_fish": "low",
+    "animal_starfish": "low",
+    "animal_shells": "low",
+    "animal_crab": "low",
+    "animal_eel": "low",
+    "animal_etc": "low",
+}
+
+
+def _get_severity(cls_name: str) -> str:
+    """Return ecological severity category for a given class."""
+    return SEVERITY_MAPPING.get(cls_name, "medium")
+
+
 CONFIDENCE_THRESHOLD = 0.4
 IMAGE_TRANSFORMS = T.Compose([T.Resize((640, 640)), T.ToTensor()])
 
@@ -229,6 +267,7 @@ def _draw_detections(image: Image.Image, labels, boxes, scores, threshold=CONFID
         detections.append({
             "class": cls_name,
             "confidence": conf,
+            "severity": _get_severity(cls_name),
             "box": [round(x, 2) for x in coords],
         })
 
@@ -289,6 +328,7 @@ async def detect(file: UploadFile = File(...), db: AsyncSession = Depends(get_db
             batch_id=batch_id,
             class_name=det["class"],
             confidence=det["confidence"],
+            severity=det.get("severity", _get_severity(det["class"])),
             bbox_x1=det["box"][0],
             bbox_y1=det["box"][1],
             bbox_x2=det["box"][2],

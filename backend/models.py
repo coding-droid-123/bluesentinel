@@ -60,6 +60,7 @@ class Detection(Base):
 
     class_name = Column(String, nullable=False)
     confidence = Column(Float, nullable=False)
+    severity = Column(String, nullable=False, default="medium")
     bbox_x1 = Column(Float, nullable=False)
     bbox_y1 = Column(Float, nullable=False)
     bbox_x2 = Column(Float, nullable=False)
@@ -80,6 +81,7 @@ class Detection(Base):
             "batch_id": str(self.batch_id),
             "class": self.class_name,
             "confidence": self.confidence,
+            "severity": self.severity,
             "box": [self.bbox_x1, self.bbox_y1, self.bbox_x2, self.bbox_y2],
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -152,6 +152,7 @@ Represents an individual classified debris or marine life target.
 * `batch_id` (`UUID`, FK ➔ `scan_batches.id` ON DELETE CASCADE)
 * `class_name` (`VARCHAR(100)`) — TrashCan ontology label (e.g. `trash_bottle`, `trash_net`)
 * `confidence` (`REAL`) — Model score (0.0 to 1.0)
+* `severity` (`VARCHAR(50)`) — Ecological threat category (`critical`, `high`, `medium`, `low`)
 * `bbox_x1`, `bbox_y1`, `bbox_x2`, `bbox_y2` (`REAL`) — Bounding box coordinates
 * `created_at` (`TIMESTAMPTZ`)
 
