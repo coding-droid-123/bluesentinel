@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+venv/
+.venv/
+backend/venv/
+
+# Build outputs
+dist/
+frontend/dist/
+dist-ssr/
+*.local
+
+# Python bytecode & caches
+__pycache__/
+backend/__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Model checkpoints & upstream clones (auto-downloaded on launch)
+backend/RT-DETRv4/
+RT-DETRv4/
+*.pth
+*.pt
+*.bin
+*.onnx
+*.safetensors
+
+# Uploads (preserve folder via .gitkeep, ignore images)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Database volume
+backend/pgdata/
+pgdata/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log

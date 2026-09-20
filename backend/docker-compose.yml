@@ -1,0 +1,16 @@
+services:
+  db:
+    image: pgvector/pgvector:pg18
+    container_name: bluesentinel-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: bluesentinel
+      POSTGRES_USER: bluesentinel
+      POSTGRES_PASSWORD: bluesentinel
+    volumes:
+      - pgdata:/var/lib/postgresql
+
+volumes:
+  pgdata:

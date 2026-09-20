@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-multipart
+huggingface_hub
+pillow
+opencv-python-headless
+sqlalchemy[asyncio]
+asyncpg
+pgvector
