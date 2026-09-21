@@ -10,18 +10,28 @@ import {
   Database,
   Waves,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  ArrowLeft
 } from 'lucide-react'
 import ImageUploader from './components/ImageUploader'
 import DetectionPanel from './components/DetectionPanel'
 import ReportPanel from './components/ReportPanel'
 import LoadingOverlay from './components/LoadingOverlay'
+import HomePage from './components/HomePage'
+import AuthModal from './components/AuthModal'
+import AboutPage from './components/AboutPage'
+import UploadPage from './components/UploadPage'
 
 // Curated high-contrast palette for detection bounding boxes & item tags
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#ea580c']
 
 function App() {
-  const [imageSrc, setImageSrc] = useState(null)
+  const [page, setPage] = useState('home')  // 'home' | 'about' | 'dashboard'
+  const [user, setUser] = useState(null)    // null = logged out
+  const [showAuth, setShowAuth] = useState(false)
+  const [authMode, setAuthMode] = useState('login')
+  const [imageSrc, setImageSrc] = useState(null)       // original image
+  const [annotatedSrc, setAnnotatedSrc] = useState(null) // backend-annotated with bboxes
   const [selectedFile, setSelectedFile] = useState(null)
   const [fileMeta, setFileMeta] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -29,6 +39,11 @@ function App() {
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [backendOnline, setBackendOnline] = useState(false)
   const [errorMessage, setErrorMessage] = useState(null)
+
+  const handleShowAuth = (mode = 'login') => { setAuthMode(mode); setShowAuth(true) }
+  const handleAuthSuccess = (u) => { setUser(u); setShowAuth(false) }
+  const handleLogout = () => { setUser(null); setPage('home') }
+  const handleGoToUpload = () => { setPage('dashboard') }
 
   const fileInputRef = useRef(null)
 
@@ -51,7 +66,7 @@ function App() {
     }
   }, [])
 
-  // Handle file selection from local upload or drag-and-drop
+  // Handle file selection — also navigate to dashboard
   const handleFileSelect = useCallback((file) => {
     setSelectedFile(file)
     setFileMeta({
@@ -65,6 +80,7 @@ function App() {
       setImageSrc(e.target.result)
     }
     reader.readAsDataURL(file)
+    setPage('dashboard')
   }, [])
 
   // Trigger debris detection inference
@@ -88,9 +104,9 @@ function App() {
 
       const data = await response.json()
 
-      // If backend returns annotated base64 image, display it
+      // Store annotated image separately — original stays in left panel
       if (data.image) {
-        setImageSrc(`data:image/jpeg;base64,${data.image}`)
+        setAnnotatedSrc(`data:image/jpeg;base64,${data.image}`)
       }
 
       // Format detection items from backend
@@ -143,188 +159,84 @@ function App() {
     }
   }, [selectedFile])
 
-  // Clear workspace
+  // Clear workspace and return to home
   const handleClear = useCallback(() => {
     setImageSrc(null)
+    setAnnotatedSrc(null)
     setSelectedFile(null)
     setFileMeta(null)
     setResults(null)
     setErrorMessage(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
+    setPage('home')
   }, [])
 
+  // ── Page routing ──
+  const authOverlay = showAuth && (
+    <AuthModal
+      mode={authMode}
+      onClose={() => setShowAuth(false)}
+      onSuccess={handleAuthSuccess}
+    />
+  )
+
+  if (page === 'about') {
+    return (
+      <>
+        <AboutPage
+          user={user}
+          onNavigate={setPage}
+          onShowAuth={handleShowAuth}
+          onLogout={handleLogout}
+          onGoToUpload={handleGoToUpload}
+        />
+        {authOverlay}
+      </>
+    )
+  }
+
+  if (page === 'home') {
+    return (
+      <>
+        <HomePage
+          onFileSelect={handleFileSelect}
+          user={user}
+          onShowAuth={handleShowAuth}
+          onNavigate={setPage}
+          onLogout={handleLogout}
+        />
+        {authOverlay}
+      </>
+    )
+  }
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800 antialiased selection:bg-blue-100 selection:text-blue-900">
-      {/* 30% Marine Ocean Blue Header */}
-      <header className="bg-gradient-to-r from-[#0c2340] via-[#112d4e] to-[#0f2e5a] text-white border-b border-blue-900/50 px-6 py-3.5 flex items-center justify-between shrink-0 shadow-md">
-        <div className="flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-blue-500/20 border border-blue-400/30 flex items-center justify-center text-xl shadow-inner">
-            🌊
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-extrabold tracking-tight text-white flex items-center gap-1.5">
-                Blue Sentinel
-              </h1>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-200 border border-blue-400/30">
-                v2.0
-              </span>
-            </div>
-            <p className="text-[11px] text-blue-200/80 font-medium tracking-wide">
-              Automated Marine Debris Detection & Ecological Audit System
-            </p>
-          </div>
-        </div>
-
-        {/* Status Indicators & 10% Green Accent Pulse */}
-        <div className="flex items-center gap-4">
-          <div className="hidden sm:flex items-center gap-2 bg-white/10 backdrop-blur-xs px-3 py-1.5 rounded-xl border border-white/15 text-xs text-blue-100">
-            <Cpu className="w-3.5 h-3.5 text-blue-300" />
-            <span className="font-semibold">D-FINE (HGNetV2-L)</span>
-            <span className="text-blue-300/70 font-mono">FP16</span>
-          </div>
-
-          <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-xl border border-white/15">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 pulse-green" />
-            <span className="text-xs font-semibold text-white">System Active</span>
-          </div>
-        </div>
-      </header>
-
-      {/* Optional Notification Banner */}
-      {errorMessage && (
-        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-center justify-between text-xs text-amber-800">
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <span>{errorMessage}</span>
-          </div>
-          <button
-            onClick={() => setErrorMessage(null)}
-            className="text-amber-700 hover:text-amber-900 font-bold ml-4 cursor-pointer"
-          >
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      {/* Main Workspace (60% White / Light Canvas) */}
-      <div className="flex-1 max-w-[1600px] w-full mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Input, Controls & Model Info (4 Cols) */}
-        <aside className="lg:col-span-4 flex flex-col gap-5">
-          {/* 1. Upload Card */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-subtle p-5">
-            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                <Layers className="w-4 h-4 text-accentBlue" />
-                Image Input
-              </span>
-              <span className="text-[11px] text-slate-400">Step 1</span>
-            </div>
-
-            <ImageUploader
-              imageSrc={imageSrc}
-              fileMeta={fileMeta}
-              onFileSelect={handleFileSelect}
-              onClear={handleClear}
-              fileInputRef={fileInputRef}
-              isAnalyzing={isAnalyzing}
-            />
-
-            {/* Action Buttons (10% Emerald Green Primary CTA!) */}
-            <div className="mt-4 flex gap-2.5">
-              <button
-                type="button"
-                onClick={handleAnalyze}
-                disabled={!imageSrc || isAnalyzing}
-                className="btn-primary-green flex-1 py-3 px-4 text-xs flex items-center justify-center gap-2 cursor-pointer"
-              >
-                {isAnalyzing ? (
-                  <>
-                    <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                    <span>Analyzing Debris...</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>Run Detection</span>
-                  </>
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleClear}
-                disabled={isAnalyzing || (!imageSrc && !results)}
-                className="btn-outline px-4 py-3 text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                title="Reset workspace"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Reset</span>
-              </button>
-            </div>
-          </div>
-
-          {/* 2. Model & Pipeline Specifications Card */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-subtle p-5">
-            <div className="flex items-center justify-between mb-3 pb-2 border-b border-slate-100">
-              <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
-                <ShieldCheck className="w-4 h-4 text-accentBlue" />
-                Pipeline Metadata
-              </span>
-              <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                Verified
-              </span>
-            </div>
-
-            <div className="space-y-2.5 text-xs">
-              <div className="flex justify-between py-1 border-b border-slate-50">
-                <span className="text-slate-500">Detector</span>
-                <span className="font-semibold text-slate-700">D-FINE HGNetV2-L</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-slate-50">
-                <span className="text-slate-500">Precision</span>
-                <span className="font-semibold text-emerald-700">FP16 Accelerated</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-slate-50">
-                <span className="text-slate-500">Dataset</span>
-                <span className="font-semibold text-slate-700">TrashCan Underwater</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-slate-50">
-                <span className="text-slate-500">Categories</span>
-                <span className="font-semibold text-blue-700">22 Marine Classes</span>
-              </div>
-              <div className="flex justify-between py-1">
-                <span className="text-slate-500">Database Storage</span>
-                <span className="font-semibold text-slate-700 flex items-center gap-1">
-                  <Database className="w-3 h-3 text-accentBlue" /> PostgreSQL 18 + pgvector
-                </span>
-              </div>
-            </div>
-          </div>
-        </aside>
-
-        {/* Right Column: Active Results & Visual Inspection (8 Cols) */}
-        <main className="lg:col-span-8 flex flex-col gap-6">
-          <DetectionPanel
-            results={results}
-            imageSrc={imageSrc}
-            isAnalyzing={isAnalyzing}
-            onOpenReport={() => setIsReportOpen(true)}
-          />
-        </main>
-      </div>
-
-      {/* Environmental Audit Report Modal */}
+    <>
+      <UploadPage
+        imageSrc={imageSrc}
+        annotatedSrc={annotatedSrc}
+        fileMeta={fileMeta}
+        isAnalyzing={isAnalyzing}
+        results={results}
+        errorMessage={errorMessage}
+        onAnalyze={handleAnalyze}
+        onClear={handleClear}
+        onFileSelect={handleFileSelect}
+        onFileReplace={handleFileSelect}
+        onOpenReport={() => setIsReportOpen(true)}
+        onDismissError={() => setErrorMessage(null)}
+        user={user}
+        onNavigate={setPage}
+        onLogout={handleLogout}
+      />
       <ReportPanel
         results={results}
-        imageSrc={imageSrc}
+        annotatedSrc={annotatedSrc}
         isOpen={isReportOpen}
         onClose={() => setIsReportOpen(false)}
       />
-
-      {/* Loading Overlay */}
       <LoadingOverlay active={isAnalyzing} />
-    </div>
+    </>
   )
 }
 
