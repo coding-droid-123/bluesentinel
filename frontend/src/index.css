@@ -206,6 +206,13 @@ body {
   animation: status-pulse 2s infinite cubic-bezier(0.4, 0, 0.6, 1);
 }
 
+/* Ocean shimmer — hero background animation */
+@keyframes ocean-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
 /* ═══════════════════════════════════════════════
    HOME PAGE — Design System
    Navy: #0c2340  |  Teal-Green gradient: #0d4a3e→#1b7a58
@@ -259,7 +266,15 @@ body {
 
 /* ── Hero ── */
 .home-hero {
-  background: linear-gradient(135deg, #0d3d32 0%, #0d5040 35%, #1a7a55 70%, #1e9060 100%);
+  background: linear-gradient(
+    135deg,
+    #1a6fa8,
+    #0e3d63,
+    #1f8468,
+    #135180
+  );
+  background-size: 300% 300%;
+  animation: ocean-shimmer 10s ease infinite;
   padding: 64px 32px 72px;
 }
 .home-hero-inner {
