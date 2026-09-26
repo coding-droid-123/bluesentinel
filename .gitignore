@@ -20,7 +20,6 @@ backend/__pycache__/
 .pytest_cache/
 
 # Model checkpoints & upstream clones (auto-downloaded on launch)
-backend/RT-DETRv4/
 RT-DETRv4/
 *.pth
 *.pt
