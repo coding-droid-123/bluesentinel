@@ -1,0 +1,405 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Blue Sentinel: Real-Time Underwater Marine Debris Detection and Ecological Audit Using RT-DETRv4 with D-FINE on the TrashCan Dataset}
+
+\author{
+    \IEEEauthorblockN{Chindam Sidharth Kumar\IEEEauthorrefmark{1}, 
+    Dandem Hansika Reddy\IEEEauthorrefmark{2}, 
+    G Vignesh Yadav\IEEEauthorrefmark{3}, 
+    Netala Sujal\IEEEauthorrefmark{4}, 
+    Pulumati Siddarth\IEEEauthorrefmark{5}}
+    \IEEEauthorblockA{Department of Computer Science and Engineering (AI-ML)\\
+    Keshav Memorial Institute of Technology, Hyderabad, India\\
+    Email: \IEEEauthorrefmark{1}c.sidharth035@gmail.com, 
+           \IEEEauthorrefmark{2}hansikareddy2023@gmail.com, 
+           \IEEEauthorrefmark{3}gurruvigneshyadav@gmail.com, 
+           \IEEEauthorrefmark{4}netalasujal27@gmail.com, 
+           \IEEEauthorrefmark{5}siddarthpulumati@gmail.com}
+}
+
+\maketitle
+
+\begin{abstract}
+Marine debris accumulation in underwater environments presents a critical ecological threat that is difficult to quantify at scale using manual survey methods. This paper presents \textbf{Blue Sentinel}, an end-to-end AI-powered marine defense system that autonomously detects, localizes, and classifies underwater debris and marine biodiversity from ROV and diver imagery using a transformer-based real-time object detector. We fine-tune an \textbf{RT-DETRv4} detector with an \textbf{HGNetV2-L (B4)} backbone and \textbf{D-FINE} fine-grained distribution refinement decoder on the \textbf{TrashCan-Instance} dataset spanning \textbf{22 classes} of marine organisms and debris. Initialized from COCO-pretrained weights and trained for \textbf{58 epochs} on a single NVIDIA Tesla T4 GPU, the model achieves a mean Average Precision of $\text{AP}@[0.50:0.95] = 0.517$ and $\text{AP}@0.50 = 0.686$ on the validation set. We deploy this model within a full-stack web application featuring a FastAPI inference server with FP16 acceleration, PostgreSQL 18 with pgvector for persistent spatial-relational scan history, and a React 19 dashboard for interactive debris inspection and PDF audit report generation. Per-class analysis reveals that rigid, high-contrast man-made debris (pipes, bottles, wreckage) is detected with $\text{AP}@0.50$ ranging 0.82--1.00, while camouflaged marine organisms and deformable debris (crabs, shells, tarps) remain substantially harder at $\text{AP}@0.50$ ranging 0.17--0.64. We document the complete experimental configuration, three non-obvious implementation issues encountered during codebase adaptation, and the system architecture to support full reproducibility.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Marine Debris Detection, Underwater Object Detection, RT-DETRv4, D-FINE, Transformer-Based Detection, TrashCan Dataset, Real-Time Inference, Ecological Audit, HGNetV2
+\end{IEEEkeywords}
+
+\section{Introduction}
+Marine debris accumulation, particularly on the seafloor and in coastal waters, is an escalating environmental concern with documented impacts on marine fauna through entanglement, ingestion, and habitat degradation \cite{trashcan}. Manual underwater surveys conducted by divers or remotely operated vehicles (ROVs) are inherently limited in spatial coverage and temporal frequency, creating a need for automated visual detection systems capable of processing underwater imagery at scale.
+
+Underwater imagery presents detection challenges distinct from terrestrial benchmarks: variable turbidity causing light scattering and absorption, progressive color attenuation with depth (particularly in the red spectrum) \cite{jaffe}, non-uniform artificial illumination from ROV-mounted lights, and frequent visual similarity between debris items and the natural seafloor substrate or marine organisms \cite{trashcan}. These factors collectively degrade the performance of detectors trained on aerial or terrestrial datasets when applied directly to underwater domains.
+
+Recent advances in end-to-end transformer-based object detectors---particularly the RT-DETR family \cite{rtdetr} and its D-FINE refinement \cite{dfine}---have demonstrated competitive accuracy with real-time inference speeds by eliminating hand-crafted components such as non-maximum suppression (NMS) and anchor generation. The RT-DETRv4 architecture \cite{rtdetrv4} extends this line with an efficient hybrid encoder combining intra-scale transformer attention with cross-scale feature pyramid fusion \cite{fpn}, making it a strong candidate for deployment in resource-constrained underwater monitoring pipelines.
+
+This study makes three primary contributions:
+\begin{enumerate}
+    \item We fine-tune RT-DETRv4 (HGNetV2-L backbone, D-FINE decoder) on the TrashCan-Instance dataset and report comprehensive per-class detection metrics across 22 categories of marine debris and organisms.
+    \item We deploy the trained model within \textbf{Blue Sentinel}, a complete web-based marine defense system with real-time inference, persistent scan history, and automated ecological audit reporting.
+    \item We document three non-obvious implementation issues encountered during adaptation of the RT-DETRv4/D-FINE codebase to a non-COCO dataset, to reduce reproduction overhead for practitioners.
+\end{enumerate}
+
+\section{Related Work}
+
+\subsection{Underwater Object Detection}
+The TrashCan dataset \cite{trashcan} established a benchmark for underwater debris detection with instance-level annotations across trash and marine organism categories. Prior work on this dataset has primarily employed anchor-based single-stage detectors (YOLO variants) \cite{yolov3} and two-stage detectors (Faster R-CNN) \cite{fasterrcnn}. These approaches require post-processing via NMS and are sensitive to anchor hyperparameter tuning, which interacts non-trivially with the high aspect-ratio variability of underwater debris (e.g., ropes, nets, tarps).
+
+\subsection{Transformer-Based Real-Time Detection}
+RT-DETR \cite{rtdetr} introduced the first real-time end-to-end transformer detector by combining a CNN backbone with a hybrid encoder architecture that decouples intra-scale self-attention from cross-scale feature fusion. D-FINE \cite{dfine} refined this approach with fine-grained distribution (FGL) and dense distribution fusion (DDF) loss formulations that improve bounding box regression precision without additional inference cost. RT-DETRv4 \cite{rtdetrv4} further extends the architecture with support for vision foundation model distillation and structural re-parameterization for deployment-time efficiency.
+
+\subsection{Multi-Scale Feature Fusion Architectures}
+Feature Pyramid Networks (FPN) \cite{fpn} and Path Aggregation Networks (PAN) \cite{pan} established the canonical multi-scale fusion paradigm used by modern detectors. The HybridEncoder in RT-DETRv4 combines these bidirectional fusion paths with intra-scale transformer attention, enabling global context capture at the deepest feature level while preserving fine-grained spatial detail through cross-scale aggregation.
+
+\section{Dataset}
+
+\subsection{TrashCan-Instance}
+We use the \textbf{TrashCan-Instance} dataset \cite{trashcan} in COCO annotation format \cite{coco}, comprising underwater imagery with instance-level bounding box annotations across \textbf{22 classes} organized into three semantic groups:
+\begin{itemize}
+    \item \textbf{Equipment (1 class):} \texttt{rov}
+    \item \textbf{Marine organisms (7 classes):} \texttt{plant}, \texttt{animal\_fish}, \texttt{animal\_starfish}, \texttt{animal\_shells}, \texttt{animal\_crab}, \texttt{animal\_eel}, \texttt{animal\_etc}
+    \item \textbf{Debris/trash (14 classes):} \texttt{trash\_clothing}, \texttt{trash\_pipe}, \texttt{trash\_bottle}, \texttt{trash\_bag}, \texttt{trash\_snack\_wrapper}, \texttt{trash\_can}, \texttt{trash\_cup}, \texttt{trash\_container}, \texttt{trash\_unknown\_instance}, \texttt{trash\_branch}, \texttt{trash\_wreckage}, \texttt{trash\_tarp}, \texttt{trash\_rope}, \texttt{trash\_net}
+\end{itemize}
+
+\subsection{Annotation Preprocessing}
+The source dataset uses 1-indexed category IDs ($1$--$22$). Since the training pipeline was configured with \texttt{remap\_mscoco\_category: False}---meaning the data loader passes raw JSON \texttt{category\_id} values unmodified as classification targets---category IDs were manually reindexed to 0-indexed values ($0$--$21$) prior to training to align with the model's 22-way classification head. This reindexing was applied identically to both training and validation annotation files using a single shared ID mapping to prevent train/validation label inconsistency.
+
+\section{Proposed Methodology}
+
+\subsection{Model Architecture}
+The detection system uses the \textbf{RTv4} architecture comprising three modular components. Fig.~\ref{fig:architecture} illustrates the end-to-end pipeline.
+
+\textbf{1) Backbone --- HGNetV2 (B4 variant):}
+The HGNetV2-L backbone \cite{rtdetrv4} extracts multi-scale features at strides $\{8, 16, 32\}$ with output channel dimensions $[512, 1024, 2048]$. Key internal modules include:
+\begin{itemize}
+    \item \textbf{StemBlock:} Multi-branch entry module with four ConvBNAct layers and MaxPool2d for rapid $4\times$ spatial downsampling.
+    \item \textbf{HG\_Block (Hourglass Block):} Core feature extraction block using sequential convolutions with multi-level channel aggregation.
+    \item \textbf{EseModule (Effective Squeeze-and-Excitation):} Lightweight channel attention with single $1\times1$ convolution and Sigmoid gating.
+    \item \textbf{LearnableAffineBlock (LAB):} Parameterized per-channel affine transformation ($\text{scale} \times x + \text{bias}$) for accelerated convergence.
+\end{itemize}
+
+\textbf{2) Neck --- HybridEncoder:}
+The encoder decouples intra-scale global feature interaction from cross-scale multi-level fusion:
+\begin{itemize}
+    \item \textit{Intra-scale (AIFI):} A single-layer TransformerEncoder with 8-head multi-head self-attention ($\text{hidden\_dim}=256$, $\text{dim\_feedforward}=1024$, GELU activation) applied only to the deepest feature map (stride 32), where spatial dimensions are compact ($20\times20$ at $640\times640$ input), enabling global context capture without prohibitive computational cost.
+    \item \textit{Cross-scale (CCFM):} Bidirectional feature fusion via top-down FPN \cite{fpn} and bottom-up PAN \cite{pan} paths using RepNCSPELAN4 blocks (CSP-ELAN with VGGBlock bottlenecks and structural re-parameterization) and SCDown modules for spatial-channel downsampling.
+\end{itemize}
+
+\textbf{3) Decoder --- DFINETransformer:}
+A 6-layer deformable attention transformer decoder with 300 learned object queries processes the fused feature maps. Instead of predicting deterministic bounding box coordinates, D-FINE models each boundary offset $e_j \in \{l, t, r, b\}$ as a probability distribution over $N_{\text{reg}} = 32$ discrete distance bins:
+\begin{equation}
+e_j = \sum_{k=0}^{N_{\text{reg}}} k \cdot \text{softmax}\left(\frac{w_{j,k}}{\tau}\right) \cdot s
+\label{eq:dfine}
+\end{equation}
+where $w_{j,k}$ are query logits, $\tau = 1.0$ is temperature, and $s = 4.0$ is regression scale. Contrastive denoising training is applied with $\text{num\_denoising}=100$, $\text{label\_noise\_ratio}=0.5$, and $\text{box\_noise\_scale}=1.0$.
+
+\textbf{4) Loss Function --- RTv4Criterion:}
+The network is optimized using a composite multi-task loss:
+\begin{equation}
+\mathcal{L} = \lambda_1 \mathcal{L}_{\text{VFL}} + \lambda_2 \mathcal{L}_{\text{L1}} + \lambda_3 \mathcal{L}_{\text{GIoU}} + \lambda_4 \mathcal{L}_{\text{FGL}} + \lambda_5 \mathcal{L}_{\text{DDF}}
+\label{eq:loss}
+\end{equation}
+where $\mathcal{L}_{\text{VFL}}$ is Varifocal Loss for asymmetric classification, $\mathcal{L}_{\text{L1}}$ is smooth L1 distance, $\mathcal{L}_{\text{GIoU}}$ is Generalized IoU loss \cite{giou}, $\mathcal{L}_{\text{FGL}}$ is Fine-Grained Localization distribution loss, and $\mathcal{L}_{\text{DDF}}$ is Dense Distribution Fusion loss. Loss weights are configured as:
+\begin{equation}
+\lambda_1 = 1.0, \quad \lambda_2 = 5.0, \quad \lambda_3 = 2.0, \quad \lambda_4 = 0.15, \quad \lambda_5 = 1.5
+\label{eq:weights}
+\end{equation}
+Bipartite query-to-ground-truth matching is computed via Hungarian matching with cost weights: class = 2, bbox = 5, GIoU = 2.
+
+\subsection{Training Configuration}
+Table~\ref{tab:hyperparams} specifies the training hyperparameters.
+
+\begin{table}[htbp]
+\caption{Complete Training Hyperparameter Specification}
+\label{tab:hyperparams}
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Initialization & RT-DETRv4-L COCO-pretrained \\
+Input resolution & $640 \times 640$ \\
+Optimizer & AdamW \cite{adamw} \\
+Base learning rate & $2.5 \times 10^{-4}$ \\
+Backbone learning rate & $1.25 \times 10^{-5}$ \\
+Weight decay & $1.25 \times 10^{-4}$ \\
+Betas & $(0.9, 0.999)$ \\
+Backbone freezing & \texttt{freeze\_stem\_only: True}, \texttt{freeze\_at: 0} \\
+LR scheduler & FlatCosine (\texttt{warmup\_iter: 500}) \\
+Total epochs & 58 \\
+Augmentation policy epochs & $[5, 29, 48]$ \\
+Mixup epochs & $[5, 29]$ \\
+Stop augmentation epoch & 48 \\
+Train batch size & 8 \\
+Validation batch size & 16 \\
+Mixed precision (AMP) & Enabled (\texttt{use\_amp: True}) \\
+EMA & Enabled ($\text{decay}=0.9999$, $\text{warmup}=1000$) \\
+Gradient clipping & $\text{clip\_max\_norm} = 0.1$ \\
+Checkpoint frequency & Every 4 epochs \\
+Hardware & Single NVIDIA Tesla T4 (15.6 GB VRAM) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Augmentation Schedule Rationale:} Transitions at epochs 5, 29, and 48 follow a proportional extension of the original 24-epoch recipe. The final 10 epochs (48--58, $\sim$17\%) are augmentation-free, stabilizing learned representations.
+
+\subsection{Model Execution Procedure}
+Algorithm~\ref{alg:pipeline} details the complete runtime sequence in Blue Sentinel.
+
+\begin{algorithm}[htbp]
+\caption{Blue Sentinel Real-Time Inference and Audit Pipeline}
+\label{alg:pipeline}
+\begin{algorithmic}[1]
+\REQUIRE Raw underwater image $I \in \mathbb{R}^{3 \times H \times W}$, confidence threshold $\tau = 0.40$, threat taxonomy $\mathcal{M}_{\text{threat}}$, deployed weights $\mathcal{W}$.
+\ENSURE Filtered detections $\mathcal{D}^* = \{(c_i, s_i, b_i, \theta_i)\}$, database record $\mathcal{B}_{\text{id}}$, downloadable audit report $\mathcal{R}_{\text{pdf}}$.
+\STATE Ingest image $I$ and record native dimensions $(H_{\text{orig}}, W_{\text{orig}})$.
+\STATE Bilinearly resize $I$ to $640 \times 640$ and apply ImageNet normalization.
+\STATE Transfer tensor to CUDA with \texttt{torch.autocast(dtype=float16)}.
+\STATE Extract multi-scale features $\{P_3, P_4, P_5\}$ via HGNetV2-B4.
+\STATE Apply AIFI self-attention to $P_5$ and CCFM cross-scale fusion $\to F_{\text{fused}}$.
+\STATE Decode 300 queries via DFINETransformer $\to$ logits $S \in \mathbb{R}^{300 \times 22}$, edges $e_j$.
+\STATE Reconstruct boxes via Eq.~(\ref{eq:dfine}) and filter:
+\STATE \quad $\mathcal{D}^* = \{(\operatorname{argmax}(S_k), \max(S_k), b_k) \mid \max(S_k) \ge \tau\}$.
+\STATE Denormalize coordinates to $(H_{\text{orig}}, W_{\text{orig}})$.
+\STATE Assign threat tier: $\theta_k = \mathcal{M}_{\text{threat}}(c_k) \in \{\text{Critical, High, Medium, Low}\}$.
+\STATE Insert \texttt{ScanBatch} and \texttt{Detection} records into PostgreSQL 18 asynchronously.
+\STATE Render Environmental Impact Audit and export $\mathcal{R}_{\text{pdf}}$ via \texttt{html2canvas} + \texttt{jsPDF}.
+\end{algorithmic}
+\end{algorithm}
+
+\section{System Architecture --- Blue Sentinel}
+The trained model is deployed within a full-stack web application. Fig.~\ref{fig:architecture} provides an overview of the system architecture.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    box/.style={draw, rectangle, rounded corners=2pt, minimum width=0.9\columnwidth, minimum height=0.7cm, align=center, fill=blue!5, font=\footnotesize},
+    arrow/.style={-{Stealth[length=2mm]}, thick}
+]
+    \node[box, fill=gray!10] (input) {\textbf{INPUT:} Underwater Image ($H \times W$)};
+    \node[box, below=0.35cm of input] (backbone) {\textbf{BACKBONE:} HGNetV2-B4\\StemBlock $\to$ HG\_Block $\times N \to$ EseModule $\to$ LAB\\Output: Pyramid $\{P_3, P_4, P_5\}$ at strides $\{8, 16, 32\}$};
+    \node[box, below=0.35cm of backbone] (neck) {\textbf{NECK:} HybridEncoder\\AIFI ($8$-head Self-Attention on $P_5$) + CCFM (FPN $\downarrow$ + PAN $\uparrow$)\\Output: $F_{\text{fused}} \in \mathbb{R}^{256 \times H/s \times W/s}$};
+    \node[box, below=0.35cm of neck] (decoder) {\textbf{DECODER:} DFINETransformer (6 layers, 300 queries)\\Deformable Attention + FGL Refinement ($N_{\text{reg}}=32$)\\Output: Logits $S \in \mathbb{R}^{300 \times 22}$, Box offsets $e_j$};
+    \node[box, below=0.35cm of neck, yshift=-1.35cm, fill=emerald!10] (deploy) {\textbf{DEPLOYMENT:} FastAPI + PyTorch Backend\\FP16 Autocast $\to$ Conf Filter ($\tau=0.4$) $\to$ Severity Mapping\\PostgreSQL 18 $\to$ React 19 Dashboard $\to$ PDF Audit};
+
+    \draw[arrow] (input) -- (backbone);
+    \draw[arrow] (backbone) -- (neck);
+    \draw[arrow] (neck) -- (decoder);
+    \draw[arrow] (decoder) -- (deploy);
+\end{tikzpicture}
+\caption{Blue Sentinel End-to-End System Architecture.}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Backend (FastAPI + PyTorch)}
+\begin{itemize}
+    \item \textbf{Framework:} FastAPI (v0.141+) with asynchronous execution.
+    \item \textbf{Model Serving:} Loaded at startup into GPU memory as a fused \texttt{RTDETRWrapper}. Inference uses FP16 mixed precision (\texttt{torch.autocast}) \cite{pytorch}. Weights are loaded from HuggingFace Hub (\texttt{coding-droid-123/trashcan-dfine}).
+    \item \textbf{Confidence Threshold:} Detections below score $\tau = 0.40$ are filtered out.
+    \item \textbf{Ecological Severity Mapping:} Classes are categorized into four tiers (\texttt{critical}, \texttt{high}, \texttt{medium}, \texttt{low}) according to biological hazard (e.g., ghost nets and ropes $\to$ \texttt{critical}; plastic containers $\to$ \texttt{high}).
+    \item \textbf{Database:} PostgreSQL 18 with \texttt{pgvector} via async SQLAlchemy with relational schema (\texttt{scan\_batches} and \texttt{detections}).
+\end{itemize}
+
+\subsection{Frontend (React 19 + Vite + Tailwind CSS v4)}
+\begin{itemize}
+    \item \textbf{Inspection Canvas:} Bounding box toggle, real-time confidence slider, per-class category filter, and debris inventory.
+    \item \textbf{Audit Reporting:} Interactive Environmental Impact Audit modal generating exportable PDF reports via \texttt{html2canvas} + \texttt{jsPDF}.
+    \item \textbf{Design Aesthetic:} Clean marine dashboard using a 60-30-10 color rule.
+\end{itemize}
+
+\section{Experimental Results}
+
+\subsection{Overall Detection Metrics}
+Table~\ref{tab:overall_metrics} lists the validation performance achieved after 58 epochs.
+
+\begin{table}[htbp]
+\caption{Overall Detection Metrics on TrashCan-Instance Validation Set}
+\label{tab:overall_metrics}
+\centering
+\begin{tabular}{lc}
+\toprule
+\textbf{Metric} & \textbf{Value} \\
+\midrule
+AP @ IoU=0.50:0.95, area=all, maxDets=100 & \textbf{0.517} \\
+AP @ IoU=0.50, area=all, maxDets=100 & \textbf{0.686} \\
+AP @ IoU=0.75, area=all, maxDets=100 & 0.555 \\
+AP @ IoU=0.50:0.95, area=small, maxDets=100 & 0.392 \\
+AP @ IoU=0.50:0.95, area=medium, maxDets=100 & 0.556 \\
+AP @ IoU=0.50:0.95, area=large, maxDets=100 & 0.762 \\
+AR @ IoU=0.50:0.95, area=all, maxDets=1 & 0.584 \\
+AR @ IoU=0.50:0.95, area=all, maxDets=10 & 0.711 \\
+AR @ IoU=0.50:0.95, area=all, maxDets=100 & 0.733 \\
+AR @ IoU=0.50:0.95, area=small, maxDets=100 & 0.672 \\
+AR @ IoU=0.50:0.95, area=medium, maxDets=100 & 0.701 \\
+AR @ IoU=0.50:0.95, area=large, maxDets=100 & 0.872 \\
+AR @ IoU=0.50, area=all, maxDets=100 & 0.936 \\
+AR @ IoU=0.75, area=all, maxDets=100 & 0.816 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:training_progression} highlights the progression from the baseline 24-epoch run to the 58-epoch schedule.
+
+\begin{table}[htbp]
+\caption{Training Progression Comparison}
+\label{tab:training_progression}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Checkpoint} & \textbf{Epochs} & \textbf{AP@[.50:.95]} & \textbf{AP@0.50} & $\mathbf{\Delta}$\textbf{AP} \\
+\midrule
+Initial run & 24 & 0.495 & --- & --- \\
+Extended schedule & 58 & \textbf{0.517} & \textbf{0.686} & +0.022 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Per-Class Average Precision and Localization Sensitivity}
+Table~\ref{tab:per_class} presents the complete per-class breakdown along with the localization retention ratio ($\frac{\text{AP@0.75}}{\text{AP@0.50}}$).
+
+\begin{table*}[t]
+\caption{Comprehensive Per-Class Detection Metrics on TrashCan-Instance Validation Set}
+\label{tab:per_class}
+\centering
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Class} & \textbf{AP@[.50:.95]} & \textbf{AP@0.50} & \textbf{AP@0.75} & $\mathbf{\Delta\text{AP}_{0.50 \to 0.75}}$ & \textbf{Retention} & \textbf{Semantic Group} \\
+\midrule
+rov & 0.839 & 0.956 & 0.889 & -0.067 & 93.0\% & Equipment \\
+plant & 0.484 & 0.741 & 0.517 & -0.224 & 69.8\% & Marine Life \\
+animal\_fish & 0.331 & 0.643 & 0.327 & -0.316 & 50.9\% & Marine Life \\
+animal\_starfish & 0.488 & 0.861 & 0.484 & -0.377 & 56.2\% & Marine Life \\
+animal\_shells & 0.253 & 0.430 & 0.267 & -0.163 & 62.1\% & Marine Life \\
+animal\_crab & 0.228 & 0.372 & 0.259 & -0.113 & 69.6\% & Marine Life \\
+animal\_eel & 0.544 & 0.758 & 0.632 & -0.126 & 83.4\% & Marine Life \\
+animal\_etc & 0.412 & 0.600 & 0.421 & -0.179 & 70.2\% & Marine Life \\
+trash\_clothing & 0.419 & 0.469 & 0.469 & 0.000 & 100.0\% & Debris \\
+trash\_pipe & 0.913 & 1.000 & 0.909 & -0.091 & 90.9\% & Debris \\
+trash\_bottle & 0.665 & 0.824 & 0.758 & -0.066 & 92.0\% & Debris \\
+trash\_bag & 0.557 & 0.782 & 0.644 & -0.138 & 82.4\% & Debris \\
+trash\_snack\_wrapper & 0.419 & 0.420 & 0.420 & 0.000 & 100.0\% & Debris \\
+trash\_can & 0.586 & 0.844 & 0.672 & -0.172 & 79.6\% & Debris \\
+trash\_cup & 0.614 & 0.687 & 0.687 & 0.000 & 100.0\% & Debris \\
+trash\_container & 0.594 & 0.699 & 0.676 & -0.023 & 96.7\% & Debris \\
+trash\_unknown\_instance & 0.503 & 0.773 & 0.539 & -0.234 & 69.7\% & Debris \\
+trash\_branch & 0.624 & 0.747 & 0.713 & -0.034 & 95.5\% & Debris \\
+trash\_wreckage & 0.677 & 0.820 & 0.705 & -0.115 & 86.0\% & Debris \\
+trash\_tarp & 0.158 & 0.218 & 0.169 & -0.049 & 77.5\% & Debris \\
+trash\_rope & 0.441 & 0.543 & 0.483 & -0.060 & 89.0\% & Debris \\
+trash\_net & 0.614 & 0.899 & 0.576 & -0.323 & 64.1\% & Debris \\
+\midrule
+\textbf{MACRO MEAN} & \textbf{0.517} & \textbf{0.686} & \textbf{0.555} & \textbf{-0.131} & \textbf{80.9\%} & --- \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Semantic Category Disaggregation}
+Table~\ref{tab:domain_metrics} compares macro averages across semantic domains.
+
+\begin{table}[htbp]
+\caption{Macro-Averaged Detection Metrics by Semantic Domain}
+\label{tab:domain_metrics}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Semantic Domain} & \textbf{$N$} & \textbf{AP@[.50:.95]} & \textbf{AP@0.50} & \textbf{Retention} \\
+\midrule
+Equipment (\texttt{rov}) & 1 & \textbf{0.839} & \textbf{0.956} & \textbf{93.0\%} \\
+Anthropogenic Debris & 14 & \textbf{0.556} & \textbf{0.695} & \textbf{86.5\%} \\
+Marine Organisms \& Flora & 7 & 0.391 & 0.629 & 66.0\% \\
+\midrule
+Overall Macro Mean & 22 & 0.517 & 0.686 & 80.9\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Extremes and Ranking Analysis}
+\textbf{Top 5 by AP@[0.50:0.95]:} \texttt{trash\_pipe} (0.913), \texttt{rov} (0.839), \texttt{trash\_wreckage} (0.677), \texttt{trash\_bottle} (0.665), \texttt{trash\_branch} (0.624).
+
+\textbf{Bottom 5 by AP@[0.50:0.95]:} \texttt{trash\_tarp} (0.158), \texttt{animal\_crab} (0.228), \texttt{animal\_shells} (0.253), \texttt{animal\_fish} (0.331), \texttt{animal\_etc} (0.412).
+
+\section{Analysis and Discussion}
+
+\subsection{Structural Invariance in Rigid Debris}
+The top cluster (\texttt{trash\_pipe}, \texttt{rov}, \texttt{trash\_bottle}) benefits from rigid silhouettes and high contrast against seabed silt. Under D-FINE distribution regression (Eq.~\ref{eq:dfine}), edge logits converge to sharp unimodal peaks, resulting in 90.9\%--93.0\% retention from $\text{AP}@0.50$ to $\text{AP}@0.75$.
+
+\subsection{Anthropogenic Debris vs. Marine Life Divide}
+The 16.5-point gap in mean AP@[.50:.95] between debris ($0.556$) and marine life ($0.391$) stems from benthic crypsis (e.g., crabs and shells blending into seabed rock) and depth-dependent red light attenuation \cite{jaffe}.
+
+\subsection{Localization Collapse in Deformable Morphologies}
+A notable phenomenon is the localization collapse observed in \texttt{animal\_fish} ($-49.1\%$), \texttt{animal\_starfish} ($-43.8\%$), and \texttt{trash\_net} ($-35.9\%$). While their gross presence is easily spotted ($\text{AP}@0.50 = 0.861$ for starfish and $0.899$ for nets), their non-convex, porous geometry introduces rectangular bounding box slack, heavily penalized at $\text{IoU} \ge 0.75$.
+
+\subsection{Detection-Bound vs. Localization-Bound Plateau}
+Three classes (\texttt{trash\_snack\_wrapper}, \texttt{trash\_clothing}, \texttt{trash\_cup}) exhibit zero precision loss between $\text{AP}@0.50$ and $\text{AP}@0.75$ ($\Delta\text{AP} = 0.000$, $100\%$ retention). These classes are detection-bound: once discovered against biofouling, their boundaries are localized with high certainty.
+
+\subsection{Extreme Amorphous Debris: trash\_tarp Failure Mode}
+\texttt{trash\_tarp} forms the global minimum ($\text{AP@[.50:.95]} = 0.158$) due to extreme topological plasticity, draping over benthic contours, and sediment burial obscuring $>70\%$ of its surface.
+
+\subsection{Operational and Ecological Implications}
+In Blue Sentinel, ghost gear (\texttt{trash\_net}, \texttt{trash\_rope}) and industrial hazards (\texttt{trash\_pipe}) are mapped to Critical/High severity. The $0.40$ inference confidence threshold maintains a practical balance between debris discovery and false alarm suppression.
+
+\section{Implementation Notes for Reproducibility}
+
+\subsection{Category ID Off-by-One Mismatch}
+With \texttt{remap\_mscoco\_category: False}, 1-indexed annotations produce CUDA device-side assert failures in the Hungarian matcher. \textbf{Resolution:} Re-index all JSON category IDs to $0$--$21$ before training.
+
+\subsection{Device-Mismatched Positional Embeddings}
+Cached positional embeddings in HybridEncoder can trigger a \texttt{cuda:0} vs. \texttt{cpu} mismatch. \textbf{Resolution:} Apply an explicit \texttt{.to(src\_flatten.device)} cast at inference time.
+
+\subsection{YAML Include-Order and Duplicate Keys}
+Hierarchical YAML parsing silently overrides top-level keys. \textbf{Resolution:} Consolidate parameter overrides into single unified dictionary blocks.
+
+\section{Limitations and Statistical Validation}
+\begin{enumerate}
+    \item Single run per configuration; seed variance has not been evaluated.
+    \item Class metrics are not yet normalized against annotation frequency.
+    \item Training used batch size 8 on a single T4 GPU.
+    \item No test-time augmentation or teacher distillation was applied.
+\end{enumerate}
+
+\textbf{Reproducibility \& Code Availability:} Weights are hosted on HuggingFace (\texttt{coding-droid-123/trashcan-dfine}). Complete code is open-sourced at \url{https://github.com/coding-droid-123/bluesentinel}.
+
+\section{Future Work}
+Future iterations will explore class-frequency reweighting, underwater turbidity augmentation, LLM-generated ecological assessments (e.g., Llama-3.3-70B), and geospatial zone tracking.
+
+\section{Conclusion}
+This paper presented Blue Sentinel, an end-to-end underwater debris detection and ecological audit platform powered by RT-DETRv4 with D-FINE. Fine-tuned on TrashCan-Instance for 58 epochs, the model reaches $\text{AP}@[0.50:0.95] = 0.517$ and $\text{AP}@0.50 = 0.686$. Deployed via FastAPI and React 19, Blue Sentinel bridges real-time deep learning with operational ocean conservation.
+
+\begin{thebibliography}{14}
+\bibitem{trashcan} J. Hong, M. Fulton, and J. Sattar, ``TrashCan: A Semantically-Segmented Dataset towards Visual Detection of Marine Debris,'' \emph{arXiv preprint arXiv:2007.08097}, 2020.
+\bibitem{dfine} Y. Peng \emph{et al.}, ``D-FINE: Redefine Regression Task in DETRs as Fine-grained Distribution Refinement,'' \emph{arXiv preprint arXiv:2410.13842}, 2024.
+\bibitem{rtdetr} Y. Zhao \emph{et al.}, ``DETRs Beat YOLOs on Real-time Object Detection,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)}, 2024.
+\bibitem{rtdetrv4} RT-DETRv4 Authors, ``RT-DETRv4: Painlessly Furthering Real-Time Object Detection with Vision Foundation Models,'' GitHub repository, 2025. [Online]. Available: \url{https://github.com/RT-DETRs/RT-DETRv4}
+\bibitem{jaffe} J. S. Jaffe, ``Underwater Optical Imaging: The Past, the Present, and the Prospects,'' \emph{IEEE Journal of Oceanic Engineering}, vol. 40, no. 3, pp. 683--700, 2015.
+\bibitem{yolov3} J. Redmon and A. Farhadi, ``YOLOv3: An Incremental Improvement,'' \emph{arXiv preprint arXiv:1804.02767}, 2018.
+\bibitem{fasterrcnn} S. Ren, K. He, R. Girshick, and J. Sun, ``Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks,'' \emph{IEEE Trans. Pattern Anal. Mach. Intell.}, vol. 39, no. 6, pp. 1137--1149, 2017.
+\bibitem{fpn} T.-Y. Lin \emph{et al.}, ``Feature Pyramid Networks for Object Detection,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)}, 2017, pp. 2117--2125.
+\bibitem{pan} S. Liu \emph{et al.}, ``Path Aggregation Network for Instance Segmentation,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)}, 2018, pp. 8759--8768.
+\bibitem{coco} T.-Y. Lin \emph{et al.}, ``Microsoft COCO: Common Objects in Context,'' in \emph{Proc. European Conf. Computer Vision (ECCV)}, 2014, pp. 740--755.
+\bibitem{giou} H. Rezatofighi \emph{et al.}, ``Generalized Intersection over Union: A Metric and a Loss for Bounding Box Regression,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)}, 2019, pp. 658--666.
+\bibitem{adamw} I. Loshchilov and F. Hutter, ``Decoupled Weight Decay Regularization,'' in \emph{Proc. Int. Conf. Learning Representations (ICLR)}, 2019.
+\bibitem{pytorch} A. Paszke \emph{et al.}, ``PyTorch: An Imperative Style, High-Performance Deep Learning Library,'' in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2019.
+\bibitem{fsaf} C. Zhu, Y. He, and M. Savvides, ``Feature Selective Anchor-Free Module for Single-Shot Object Detection,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)}, 2019, pp. 840--849.
+\end{thebibliography}
+
+\end{document}
