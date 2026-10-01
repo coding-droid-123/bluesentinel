@@ -27,6 +27,8 @@ class ScanBatch(Base):
     gps_lat = Column(Float, nullable=True)
     gps_lon = Column(Float, nullable=True)
     geofence_zone = Column(String, nullable=True)
+    zone_type = Column(String, nullable=True)           # "protected" | "eez" | "open_ocean"
+    location_source = Column(String, nullable=True)    # "user_pinned" (always, for now)
 
     created_at = Column(
         DateTime(timezone=True),
@@ -46,6 +48,8 @@ class ScanBatch(Base):
             "gps_lat": self.gps_lat,
             "gps_lon": self.gps_lon,
             "geofence_zone": self.geofence_zone,
+            "zone_type": self.zone_type,
+            "location_source": self.location_source,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 

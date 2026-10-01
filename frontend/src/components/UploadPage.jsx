@@ -1,5 +1,6 @@
 import React, { useRef } from 'react'
 import logo from '../assets/logo.png'
+import LocationPinMap from './LocationPinMap'
 
 const SEVERITY_COLOR = {
   critical: '#ef4444',
@@ -27,6 +28,8 @@ export default function UploadPage({
   onFileReplace,
   onOpenReport,
   onDismissError,
+  pin,
+  onSetPin,
   user,
   onNavigate,
   onLogout,
@@ -121,6 +124,7 @@ export default function UploadPage({
 
           <div className="home-nav-links">
             <button className="home-nav-link" onClick={() => onNavigate('about')}>About</button>
+            <button className="home-nav-link" onClick={() => onNavigate('hotspots')}>🌊 Hotspot Tracker</button>
             {user && <span className="home-nav-user">👋 {user.name}</span>}
             <button className="home-nav-link" onClick={onClear}>← Home</button>
             {user && <button className="home-nav-link" onClick={onLogout}>Log Out</button>}
@@ -195,6 +199,43 @@ export default function UploadPage({
             ))}
           </div>
 
+          {/* Error / Alert banner */}
+          {errorMessage && (
+            <div style={{
+              background: '#fef2f2',
+              border: '1px solid #f87171',
+              borderRadius: 12,
+              padding: '14px 18px',
+              marginBottom: 20,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 20 }}>⚠️</span>
+                <div>
+                  <p style={{ margin: 0, fontWeight: 700, color: '#991b1b', fontSize: 13 }}>Notice</p>
+                  <p style={{ margin: '2px 0 0', color: '#b91c1c', fontSize: 12 }}>{errorMessage}</p>
+                </div>
+              </div>
+              <button
+                onClick={onDismissError}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#991b1b',
+                  fontSize: 18,
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  padding: '2px 8px'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* ── IMAGE + RESULTS ── */}
           <div className="upload-main-grid">
 
@@ -204,6 +245,17 @@ export default function UploadPage({
               <div className="upload-image-wrap">
                 <img src={imageSrc} alt="Selected" className="upload-preview-img" />
               </div>
+
+              {/* Map — shown after image selected, before results */}
+              {!results && (
+                <div style={{ marginTop: 16 }}>
+                  <LocationPinMap
+                    pin={pin}
+                    onConfirm={(p) => onSetPin(p)}
+                    onSkip={() => onSetPin(null)}
+                  />
+                </div>
+              )}
 
               <div className="upload-action-row">
                 <button
@@ -338,7 +390,51 @@ export default function UploadPage({
                     )}
                   </div>
 
-                  {/* 3 ── Scan record + Report */}
+                  {/* 3 ── Location Zone */}
+                  {results.location && (
+                    <div className="home-card" style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      background: results.location.zone_type === 'protected' ? '#fef2f2' : '#f0f9ff',
+                      borderColor: results.location.zone_type === 'protected' ? '#fecaca' : '#bae6fd',
+                    }}>
+                      <span style={{ fontSize: 22 }}>
+                        {results.location.zone_type === 'protected' ? '🔴' : '🌊'}
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <p className="home-card-num" style={{ margin: 0, color: results.location.zone_type === 'protected' ? '#991b1b' : '#0369a1' }}>
+                          {results.location.zone_type === 'protected' ? 'MARINE PROTECTED AREA' : 'SCAN ZONE'}
+                        </p>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', margin: '2px 0' }}>
+                          {results.location.zone}
+                        </p>
+                        <p style={{ fontSize: 11, color: '#64748b', fontFamily: 'monospace' }}>
+                          {results.location.lat?.toFixed(4)}°N · {results.location.lon?.toFixed(4)}°E · Added to Hotspot Tracker
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => onNavigate('hotspots')}
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 600,
+                          background: '#0284c7',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: 8,
+                          padding: '7px 12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5,
+                        }}
+                      >
+                        🌊 Hotspot Tracker ›
+                      </button>
+                    </div>
+                  )}
+
+                  {/* 4 ── Scan record + Report */}
                   <div className="home-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
                     <div>
                       <p className="home-card-num" style={{ margin: 0 }}>SCAN RECORD</p>

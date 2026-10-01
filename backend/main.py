@@ -12,7 +12,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torchvision.transforms as T
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +22,7 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, engine
+from geofences import is_ocean, get_zone
 from models import Base, ScanBatch, Detection
 
 # ---------------------------------------------------------------------------
@@ -280,7 +281,12 @@ def _draw_detections(image: Image.Image, labels, boxes, scores, threshold=CONFID
 
 
 @app.post("/detect")
-async def detect(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+async def detect(
+    file: UploadFile = File(...),
+    lat: float = Form(None),   # user-pinned latitude  (optional)
+    lon: float = Form(None),   # user-pinned longitude (optional)
+    db: AsyncSession = Depends(get_db),
+):
     """Run RT-DETRv4 in-memory inference and persist results to database."""
     if MODEL is None or DEVICE is None:
         raise HTTPException(status_code=503, detail="Model is still initializing.")
@@ -305,6 +311,20 @@ async def detect(file: UploadFile = File(...), db: AsyncSession = Depends(get_db
     labels, boxes, scores = output
     detections = _draw_detections(im_pil, labels, boxes, scores)
 
+    # --- Geofencing ---
+    zone_name: str | None = None
+    zone_type: str | None = None
+
+    if lat is not None and lon is not None:
+        if not is_ocean(lat, lon):
+            raise HTTPException(
+                status_code=400,
+                detail="Pinned location is on land. Please pin your actual underwater scan location on the ocean.",
+            )
+        zone = get_zone(lat, lon)
+        zone_name = zone["name"]
+        zone_type = zone["type"]
+
     # --- Persist to database ---
     batch_id = uuid.uuid4()
 
@@ -319,6 +339,11 @@ async def detect(file: UploadFile = File(...), db: AsyncSession = Depends(get_db
         filename=file.filename or "unknown",
         image_path=f"/uploads/{image_filename}",
         total_detections=len(detections),
+        gps_lat=lat,
+        gps_lon=lon,
+        geofence_zone=zone_name,
+        zone_type=zone_type,
+        location_source="user_pinned" if lat is not None else None,
     )
     db.add(scan_batch)
 
@@ -347,7 +372,108 @@ async def detect(file: UploadFile = File(...), db: AsyncSession = Depends(get_db
         "batch_id": str(batch_id),
         "image": image_b64,
         "detections": detections,
+        "location": {
+            "lat": lat,
+            "lon": lon,
+            "zone": zone_name,
+            "zone_type": zone_type,
+            "source": "user_pinned",
+            "verified": False,
+        } if lat is not None else None,
     })
+
+
+
+# ---------------------------------------------------------------------------
+# Location validation endpoint (ocean vs land + zone check)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/validate-location")
+async def validate_location(lat: float, lon: float):
+    """
+    Validate whether a pinned (lat, lon) is over ocean or on land,
+    and identify its marine zone.
+    """
+    ocean = is_ocean(lat, lon)
+    zone = get_zone(lat, lon) if ocean else None
+    return JSONResponse({
+        "lat": lat,
+        "lon": lon,
+        "is_ocean": ocean,
+        "is_land": not ocean,
+        "zone": zone["name"] if zone else None,
+        "zone_type": zone["type"] if zone else None,
+        "message": (
+            "Valid marine coordinates."
+            if ocean
+            else "Pinned location is on land. Marine debris scans must be located in ocean or coastal waters."
+        ),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Hotspot tracker endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.get("/hotspots")
+async def get_hotspots(db: AsyncSession = Depends(get_db)):
+    """
+    Return all geolocated scans as hotspot markers for the live map.
+    Only includes scans that have lat/lon pinned by users.
+    Persists in DB — survives restarts and reflects all users' scans.
+    """
+    # All scans with a pinned location
+    result = await db.execute(
+        select(ScanBatch)
+        .where(ScanBatch.gps_lat.isnot(None), ScanBatch.gps_lon.isnot(None))
+        .order_by(desc(ScanBatch.created_at))
+    )
+    batches = result.scalars().all()
+
+    hotspots = []
+    for batch in batches:
+        # Get detections for this batch to find dominant severity + top class
+        det_result = await db.execute(
+            select(Detection).where(Detection.batch_id == batch.id)
+        )
+        dets = det_result.scalars().all()
+
+        # Dominant severity (worst wins)
+        severity_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+        dominant_severity = "low"
+        if dets:
+            dominant_severity = max(
+                (d.severity for d in dets),
+                key=lambda s: severity_rank.get(s, 0),
+                default="low",
+            )
+
+        # Most common class
+        from collections import Counter
+        class_counts = Counter(d.class_name for d in dets)
+        top_class = class_counts.most_common(1)[0][0] if class_counts else None
+        top_class_display = (
+            top_class.replace("trash_", "").replace("animal_", "").replace("_", " ").title()
+            if top_class else "Unknown"
+        )
+
+        hotspots.append({
+            "batch_id": str(batch.id),
+            "lat": batch.gps_lat,
+            "lon": batch.gps_lon,
+            "zone": batch.geofence_zone or "Unknown Zone",
+            "zone_type": batch.zone_type or "open_ocean",
+            "total_detections": batch.total_detections,
+            "dominant_severity": dominant_severity,
+            "top_class": top_class_display,
+            "filename": batch.filename,
+            "scanned_at": batch.created_at.isoformat() if batch.created_at else None,
+            "image_path": batch.image_path,
+        })
+
+    return JSONResponse({"count": len(hotspots), "hotspots": hotspots})
 
 
 # ---------------------------------------------------------------------------

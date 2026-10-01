@@ -18,6 +18,15 @@ async def init():
         # Create all tables from ORM models
         await conn.run_sync(Base.metadata.create_all)
 
+        # Migration: add geofencing columns if they don't exist yet
+        # (safe to run on existing databases — IF NOT EXISTS prevents errors)
+        await conn.execute(text(
+            "ALTER TABLE scan_batches ADD COLUMN IF NOT EXISTS zone_type VARCHAR"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE scan_batches ADD COLUMN IF NOT EXISTS location_source VARCHAR"
+        ))
+
     await engine.dispose()
     print("Database tables created successfully.")
 

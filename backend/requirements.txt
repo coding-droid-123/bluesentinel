@@ -7,3 +7,12 @@ opencv-python-headless
 sqlalchemy[asyncio]
 asyncpg
 pgvector
+scipy
+torch
+torchvision
+tensorboard
+calflops
+transformers
+faster-coco-eval>=1.6.5
+shapely
+geopandas

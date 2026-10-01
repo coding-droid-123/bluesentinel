@@ -34,6 +34,7 @@ export default function HomePage({ onFileSelect, user, onShowAuth, onNavigate, o
           {/* Nav links + auth */}
           <div className="home-nav-links">
             <button className="home-nav-link" onClick={() => onNavigate('about')}>About</button>
+            <button className="home-nav-link" onClick={() => onNavigate('hotspots')}>🌊 Hotspot Tracker</button>
             {user ? (
               <>
                 <span className="home-nav-user">👋 {user.name}</span>

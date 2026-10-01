@@ -21,12 +21,13 @@ import HomePage from './components/HomePage'
 import AuthModal from './components/AuthModal'
 import AboutPage from './components/AboutPage'
 import UploadPage from './components/UploadPage'
+import HotspotMap from './components/HotspotMap'
 
 // Curated high-contrast palette for detection bounding boxes & item tags
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#ea580c']
 
 function App() {
-  const [page, setPage] = useState('home')  // 'home' | 'about' | 'dashboard'
+  const [page, setPage] = useState('home')  // 'home' | 'about' | 'dashboard' | 'hotspots'
   const [user, setUser] = useState(null)    // null = logged out
   const [showAuth, setShowAuth] = useState(false)
   const [authMode, setAuthMode] = useState('login')
@@ -39,6 +40,7 @@ function App() {
   const [isReportOpen, setIsReportOpen] = useState(false)
   const [backendOnline, setBackendOnline] = useState(false)
   const [errorMessage, setErrorMessage] = useState(null)
+  const [pin, setPin] = useState(null)   // { lat, lon } — user-pinned map location
 
   const handleShowAuth = (mode = 'login') => { setAuthMode(mode); setShowAuth(true) }
   const handleAuthSuccess = (u) => { setUser(u); setShowAuth(false) }
@@ -92,6 +94,10 @@ function App() {
     try {
       const formData = new FormData()
       formData.append('file', selectedFile)
+      if (pin) {
+        formData.append('lat', pin.lat)
+        formData.append('lon', pin.lon)
+      }
 
       const response = await fetch('http://localhost:8000/detect', {
         method: 'POST',
@@ -99,6 +105,13 @@ function App() {
       })
 
       if (!response.ok) {
+        const errData = await response.json().catch(() => ({}))
+        // Surface backend's on-land validation error directly
+        if (response.status === 400 && errData.detail) {
+          setErrorMessage(errData.detail)
+          setIsAnalyzing(false)
+          return
+        }
         throw new Error(`Inference returned status ${response.status}`)
       }
 
@@ -131,6 +144,7 @@ function App() {
         avgConfidence: `${avgConf}%`,
         debrisTypes: uniqueTypes,
         severity: totalCount > 5 ? 'critical' : totalCount > 2 ? 'high' : totalCount > 0 ? 'medium' : 'low',
+        location: data.location || null,   // { lat, lon, zone, zone_type, verified }
       })
     } catch (err) {
       console.warn('Backend inference failed, falling back to local simulation demonstration:', err)
@@ -157,7 +171,7 @@ function App() {
     } finally {
       setIsAnalyzing(false)
     }
-  }, [selectedFile])
+  }, [selectedFile, pin])
 
   // Clear workspace and return to home
   const handleClear = useCallback(() => {
@@ -167,6 +181,7 @@ function App() {
     setFileMeta(null)
     setResults(null)
     setErrorMessage(null)
+    setPin(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
     setPage('home')
   }, [])
@@ -179,6 +194,20 @@ function App() {
       onSuccess={handleAuthSuccess}
     />
   )
+
+  if (page === 'hotspots') {
+    return (
+      <>
+        <HotspotMap
+          user={user}
+          onNavigate={setPage}
+          onShowAuth={handleShowAuth}
+          onLogout={handleLogout}
+        />
+        {authOverlay}
+      </>
+    )
+  }
 
   if (page === 'about') {
     return (
@@ -225,6 +254,8 @@ function App() {
         onFileReplace={handleFileSelect}
         onOpenReport={() => setIsReportOpen(true)}
         onDismissError={() => setErrorMessage(null)}
+        pin={pin}
+        onSetPin={setPin}
         user={user}
         onNavigate={setPage}
         onLogout={handleLogout}
