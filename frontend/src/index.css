@@ -1032,3 +1032,91 @@ body {
   border-radius: 4px;
   flex-shrink: 0;
 }
+
+/* ══════════════════════════════════════════════
+   SCALE-UP v2 — ROV Simulator + Optimizer
+══════════════════════════════════════════════ */
+
+/* Alert entry animation */
+@keyframes alert-slide-in {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: none; }
+}
+.alert-card-in {
+  animation: alert-slide-in 0.28s cubic-bezier(0.34,1.4,0.64,1);
+}
+
+/* Pile ranking badge shimmer (gold #1) */
+@keyframes gold-shimmer {
+  0%   { box-shadow: 0 0 0 0 rgba(251,191,36,0.6); }
+  70%  { box-shadow: 0 0 0 6px rgba(251,191,36,0); }
+  100% { box-shadow: 0 0 0 0 rgba(251,191,36,0); }
+}
+.rank-gold { animation: gold-shimmer 2.5s infinite ease-out; }
+
+/* Simulated bbox stroke animation */
+@keyframes bbox-flash {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+/* Cost optimizer sensitivity bar */
+.optimizer-sensitivity-bar {
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 9999px;
+  overflow: hidden;
+  margin-top: 6px;
+}
+.optimizer-sensitivity-fill {
+  height: 100%;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, #2563eb, #0891b2);
+  transition: width 0.5s ease;
+}
+
+/* Home feature card buttons */
+.feature-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 9px 18px;
+  border-radius: 9px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.18s, transform 0.15s;
+}
+.feature-btn:hover { opacity: 0.85; transform: translateY(-1px); }
+
+/* Live feed REC badge blink */
+@keyframes rec-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.3; }
+}
+.rec-dot { animation: rec-blink 1.2s infinite; }
+
+/* ROV stats grid responsive */
+@media (max-width: 900px) {
+  .upload-stats-row { grid-template-columns: 1fr 1fr !important; }
+}
+
+/* Optimizer area cards responsive */
+@media (max-width: 900px) {
+  .optimizer-grid { grid-template-columns: 1fr !important; }
+}
+
+/* Home feature section responsive */
+@media (max-width: 700px) {
+  .home-cards-grid { grid-template-columns: 1fr !important; }
+}
+
+/* Nav — more compact for extra links */
+.home-nav-links {
+  gap: 4px !important;
+}
+.home-nav-link {
+  padding: 5px 10px !important;
+  font-size: 12px !important;
+}

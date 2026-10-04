@@ -27,9 +27,7 @@ export default function UploadPage({
   onFileReplace,
   onOpenReport,
   onDismissError,
-  user,
   onNavigate,
-  onLogout,
 }) {
   const replaceRef = useRef(null)
   const firstPickRef = useRef(null)
@@ -41,14 +39,14 @@ export default function UploadPage({
         <nav className="home-nav">
           <div className="home-nav-inner" style={{ justifyContent: 'space-between' }}>
             <button className="home-logo" style={{ background: 'none', border: 'none', cursor: 'pointer' }} onClick={onClear}>
-              <img src={logo} alt="Blue Sentinal" className="home-logo-img" />
-              <span className="home-logo-text">Blue Sentinal</span>
+              <img src={logo} alt="Blue Sentinel" className="home-logo-img" />
+              <span className="home-logo-text">Blue Sentinel</span>
             </button>
             <div className="home-nav-links">
+              <button className="home-nav-link" onClick={onClear}>Home</button>
+              <button className="home-nav-link" onClick={() => onNavigate('rov')}>ROV Simulator</button>
+              <button className="home-nav-link" onClick={() => onNavigate('optimizer')}>Optimizer</button>
               <button className="home-nav-link" onClick={() => onNavigate('about')}>About</button>
-              {user && <span className="home-nav-user">👋 {user.name}</span>}
-              <button className="home-nav-link" onClick={onClear}>← Home</button>
-              {user && <button className="home-nav-link" onClick={onLogout}>Log Out</button>}
             </div>
           </div>
         </nav>
@@ -98,7 +96,7 @@ export default function UploadPage({
         </section>
 
         <footer className="home-footer">
-          <p className="home-footer-title">Blue Sentinal — Ocean debris detection for researchers</p>
+          <p className="home-footer-title">Blue Sentinel — Ocean debris detection for researchers</p>
           <p className="home-footer-sub">Model: RTDETRv4 &nbsp;·&nbsp; Dataset: Trashcan Dataset</p>
         </footer>
       </div>
@@ -115,15 +113,15 @@ export default function UploadPage({
             style={{ background: 'none', border: 'none', cursor: 'pointer' }}
             onClick={onClear}
           >
-            <img src={logo} alt="Blue Sentinal" className="home-logo-img" />
-            <span className="home-logo-text">Blue Sentinal</span>
+            <img src={logo} alt="Blue Sentinel" className="home-logo-img" />
+            <span className="home-logo-text">Blue Sentinel</span>
           </button>
 
           <div className="home-nav-links">
+            <button className="home-nav-link" onClick={onClear}>Home</button>
+            <button className="home-nav-link" onClick={() => onNavigate('rov')}>ROV Simulator</button>
+            <button className="home-nav-link" onClick={() => onNavigate('optimizer')}>Optimizer</button>
             <button className="home-nav-link" onClick={() => onNavigate('about')}>About</button>
-            {user && <span className="home-nav-user">👋 {user.name}</span>}
-            <button className="home-nav-link" onClick={onClear}>← Home</button>
-            {user && <button className="home-nav-link" onClick={onLogout}>Log Out</button>}
           </div>
         </div>
       </nav>
@@ -322,6 +320,21 @@ export default function UploadPage({
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                               <span className="upload-detection-dot" style={{ background: item.color }} />
                               <span className="upload-detection-name">{item.name}</span>
+                              {item.severity && (
+                                <span style={{
+                                  background: SEVERITY_BG[item.severity] || '#f1f5f9',
+                                  color: SEVERITY_COLOR[item.severity] || '#475569',
+                                  border: `1px solid ${SEVERITY_COLOR[item.severity] || '#cbd5e1'}40`,
+                                  borderRadius: 999,
+                                  padding: '1px 8px',
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  textTransform: 'uppercase',
+                                  letterSpacing: '0.04em',
+                                }}>
+                                  {item.severity}
+                                </span>
+                              )}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                               <div className="upload-conf-bar-bg">
@@ -360,7 +373,7 @@ export default function UploadPage({
 
       {/* ── FOOTER ── */}
       <footer className="home-footer">
-        <p className="home-footer-title">Blue Sentinal — Ocean debris detection for researchers</p>
+        <p className="home-footer-title">Blue Sentinel — Ocean debris detection for researchers</p>
         <p className="home-footer-sub">Model: RTDETRv4 model &nbsp;·&nbsp; Dataset: Trashcan Dataset</p>
       </footer>
     </div>

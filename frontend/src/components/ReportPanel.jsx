@@ -144,8 +144,30 @@ const S = {
   },
 }
 
-const TIER = (conf) => conf >= 80 ? 'High Risk' : conf >= 55 ? 'Elevated' : 'Moderate'
-const TIER_COL = (conf) => conf >= 80 ? '#b91c1c' : conf >= 55 ? '#c2410c' : '#92400e'
+const SEV_LABELS = {
+  critical: 'Critical Risk',
+  high: 'High Risk',
+  medium: 'Medium Risk',
+  low: 'Low Risk',
+}
+const SEV_COL = {
+  critical: '#b91c1c',
+  high: '#c2410c',
+  medium: '#92400e',
+  low: '#065f46',
+}
+
+const GET_SEV_LABEL = (item) => {
+  const s = item?.severity?.toLowerCase()
+  if (s && SEV_LABELS[s]) return SEV_LABELS[s]
+  return item?.confidence >= 80 ? 'High Risk' : item?.confidence >= 55 ? 'Elevated' : 'Moderate'
+}
+
+const GET_SEV_COLOR = (item) => {
+  const s = item?.severity?.toLowerCase()
+  if (s && SEV_COL[s]) return SEV_COL[s]
+  return item?.confidence >= 80 ? '#b91c1c' : item?.confidence >= 55 ? '#c2410c' : '#92400e'
+}
 
 export default function ReportPanel({ results, annotatedSrc, isOpen, onClose }) {
   const [isExporting, setIsExporting] = useState(false)
@@ -205,7 +227,7 @@ export default function ReportPanel({ results, annotatedSrc, isOpen, onClose }) 
               <div>
                 <div style={S.brandRow}>
                   <span style={{ fontSize: 26 }}>🌊</span>
-                  <h1 style={S.brandName}>Blue Sentinal</h1>
+                  <h1 style={S.brandName}>Blue Sentinel</h1>
                 </div>
                 <p style={S.brandSub}>Marine Ecological Survey &amp; Debris Audit</p>
               </div>
@@ -263,7 +285,9 @@ export default function ReportPanel({ results, annotatedSrc, isOpen, onClose }) 
                       <td style={S.tdNum}>#{i + 1}</td>
                       <td style={S.td}>{item.name}</td>
                       <td style={S.tdConf(item.color)}>{Math.round(item.confidence)}%</td>
-                      <td style={{ ...S.td, color: TIER_COL(item.confidence), fontWeight: 700 }}>{TIER(item.confidence)}</td>
+                      <td style={{ ...S.td, color: GET_SEV_COLOR(item), fontWeight: 700 }}>
+                        {GET_SEV_LABEL(item)}
+                      </td>
                     </tr>
                   )) : (
                     <tr>
@@ -325,7 +349,7 @@ export default function ReportPanel({ results, annotatedSrc, isOpen, onClose }) 
 
             {/* Document footer */}
             <div style={S.docFooter}>
-              <span>Blue Sentinal Marine Defense System</span>
+              <span>Blue Sentinel Marine Defense System</span>
               <span style={S.footerBadge}>✓ Verified</span>
               <span>Generated Automatically</span>
             </div>

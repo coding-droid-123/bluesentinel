@@ -51,6 +51,10 @@ HF_CONFIG_BASE = "https://huggingface.co/spaces/coding-droid-123/BlueSentinel/ra
 UPLOADS_DIR = Path("uploads").resolve()
 UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
+WEIGHTS_DIR = (Path(__file__).parent / "weights").resolve()
+WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+LOCAL_CKPT_PATH = WEIGHTS_DIR / CKPT_FILE
+
 CLASS_NAMES = [
     "rov", "plant", "animal_fish", "animal_starfish", "animal_shells",
     "animal_crab", "animal_eel", "animal_etc", "trash_clothing", "trash_pipe",
@@ -98,7 +102,9 @@ def _get_severity(cls_name: str) -> str:
 
 
 CONFIDENCE_THRESHOLD = 0.4
-IMAGE_TRANSFORMS = T.Compose([T.Resize((640, 640)), T.ToTensor()])
+# D-FINE HGNetV2-L positional embeddings require 640x640 (20x20 = 400 anchor tokens)
+INFER_SIZE = 640
+IMAGE_TRANSFORMS = T.Compose([T.Resize((INFER_SIZE, INFER_SIZE)), T.ToTensor()])
 
 # Global in-memory model instances
 MODEL: nn.Module | None = None
@@ -211,8 +217,46 @@ def _load_model_to_memory():
 
     DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     wrapped.to(DEVICE)
+
+    # On CPU: use all available cores for intra-op parallelism
+    if DEVICE.type == "cpu":
+        import multiprocessing
+        n_cores = multiprocessing.cpu_count()
+        torch.set_num_threads(n_cores)
+        torch.set_num_interop_threads(max(1, n_cores // 2))
+        print(f"CPU mode: using {n_cores} threads for inference.")
+
     MODEL = wrapped
     print(f"Model successfully loaded in memory on {DEVICE}!")
+
+
+def _resolve_checkpoint(force: bool = False) -> str:
+    """Ensure the model weights exist locally in backend/weights/.
+
+    If weights/best.pth exists and is valid, load it immediately with ZERO network calls.
+    Only checks/downloads from HuggingFace if the local file is missing, or if force=True
+    (or FORCE_MODEL_DOWNLOAD=1 in environment variables).
+    """
+    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    force_download = force or (os.environ.get("FORCE_MODEL_DOWNLOAD", "0").lower() in ("1", "true", "yes"))
+
+    if LOCAL_CKPT_PATH.exists() and LOCAL_CKPT_PATH.stat().st_size > 10 * 1024 * 1024 and not force_download:
+        size_mb = LOCAL_CKPT_PATH.stat().st_size / (1024 * 1024)
+        print(f"Using local cached model: {LOCAL_CKPT_PATH} ({size_mb:.1f} MB) — ZERO download.")
+        return str(LOCAL_CKPT_PATH)
+
+    print(f"Local checkpoint not found at {LOCAL_CKPT_PATH} (force={force_download}). Resolving...")
+    try:
+        # Check local HF cache first without querying remote server
+        cached_file = hf_hub_download(repo_id=CKPT_REPO, filename=CKPT_FILE, local_files_only=not force_download)
+        import shutil
+        shutil.copyfile(cached_file, str(LOCAL_CKPT_PATH))
+        print(f"Stored model checkpoint locally at {LOCAL_CKPT_PATH}")
+        return str(LOCAL_CKPT_PATH)
+    except Exception as e:
+        print(f"Downloading {CKPT_FILE} from {CKPT_REPO} to local weights folder... ({e})")
+        downloaded = hf_hub_download(repo_id=CKPT_REPO, filename=CKPT_FILE, local_dir=str(WEIGHTS_DIR))
+        return str(downloaded)
 
 
 @app.on_event("startup")
@@ -222,13 +266,45 @@ async def startup_event():
     # Create uploads directory
     UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-    print("Setting up repository and downloading models...")
+    print("Checking repository and local model...")
     _clone_repo()
     _patch_hybrid_encoder()
     _download_configs()
-    CKPT_PATH = hf_hub_download(repo_id=CKPT_REPO, filename=CKPT_FILE)
+    CKPT_PATH = _resolve_checkpoint()
     _load_model_to_memory()
     print("Setup complete. Server is ready for instant inference.")
+
+
+@app.get("/model/status")
+async def model_status():
+    """Return status of the local model weights and device."""
+    exists = LOCAL_CKPT_PATH.exists()
+    size_mb = round(LOCAL_CKPT_PATH.stat().st_size / (1024 * 1024), 2) if exists else 0
+    return {
+        "status": "ready" if MODEL is not None else "initializing",
+        "device": str(DEVICE),
+        "local_checkpoint_path": str(LOCAL_CKPT_PATH),
+        "exists_locally": exists,
+        "size_mb": size_mb,
+        "infer_size": INFER_SIZE,
+    }
+
+
+@app.post("/model/upgrade")
+async def upgrade_model(force_download: bool = True):
+    """Force re-download of model weights from HuggingFace and reload into memory."""
+    global CKPT_PATH
+    try:
+        CKPT_PATH = _resolve_checkpoint(force=force_download)
+        _load_model_to_memory()
+        return {
+            "status": "success",
+            "message": "Model upgraded and reloaded successfully.",
+            "checkpoint_path": CKPT_PATH,
+            "device": str(DEVICE),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to reload model: {e}")
 
 
 # Serve saved annotated images
@@ -280,7 +356,11 @@ def _draw_detections(image: Image.Image, labels, boxes, scores, threshold=CONFID
 
 
 @app.post("/detect")
-async def detect(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+async def detect(
+    file: UploadFile = File(...),
+    stream: bool = False,
+    db: AsyncSession = Depends(get_db),
+):
     """Run RT-DETRv4 in-memory inference and persist results to database."""
     if MODEL is None or DEVICE is None:
         raise HTTPException(status_code=503, detail="Model is still initializing.")
@@ -288,22 +368,32 @@ async def detect(file: UploadFile = File(...), db: AsyncSession = Depends(get_db
     try:
         content = await file.read()
         im_pil = Image.open(io.BytesIO(content)).convert("RGB")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
 
-    w, h = im_pil.size
-    orig_size = torch.tensor([[w, h]]).to(DEVICE)
-    im_data = IMAGE_TRANSFORMS(im_pil).unsqueeze(0).to(DEVICE)
+        w, h = im_pil.size
+        orig_size = torch.tensor([[w, h]]).to(DEVICE)
+        im_data = IMAGE_TRANSFORMS(im_pil).unsqueeze(0).to(DEVICE)
 
-    with torch.no_grad():
-        if "cuda" in str(DEVICE):
-            with torch.autocast(device_type="cuda", dtype=torch.float16):
+        with torch.no_grad():
+            if "cuda" in str(DEVICE):
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    output = MODEL(im_data, orig_size)
+            else:
                 output = MODEL(im_data, orig_size)
-        else:
-            output = MODEL(im_data, orig_size)
 
-    labels, boxes, scores = output
-    detections = _draw_detections(im_pil, labels, boxes, scores)
+        labels, boxes, scores = output
+        detections = _draw_detections(im_pil, labels, boxes, scores)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    # If stream mode (e.g. ROV real-time video simulation), skip disk and DB writes
+    if stream:
+        return JSONResponse({
+            "batch_id": None,
+            "image": None,
+            "detections": detections,
+        })
 
     # --- Persist to database ---
     batch_id = uuid.uuid4()

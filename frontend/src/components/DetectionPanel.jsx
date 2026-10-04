@@ -279,7 +279,19 @@ export default function DetectionPanel({
                       style={{ backgroundColor: item.color || '#2563eb' }}
                     />
                     <div>
-                      <div className="text-sm font-semibold text-slate-800">{item.name}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-800">{item.name}</span>
+                        {item.severity && (
+                          <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold uppercase tracking-wider border ${
+                            item.severity === 'critical' ? 'bg-red-50 text-red-700 border-red-200' :
+                            item.severity === 'high' ? 'bg-orange-50 text-orange-700 border-orange-200' :
+                            item.severity === 'medium' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                            'bg-emerald-50 text-emerald-700 border-emerald-200'
+                          }`}>
+                            {item.severity}
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-slate-400">Class Target #{idx + 1}</div>
                     </div>
                   </div>
