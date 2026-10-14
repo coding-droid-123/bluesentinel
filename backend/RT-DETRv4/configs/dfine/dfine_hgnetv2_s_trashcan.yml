@@ -1,0 +1,64 @@
+__include__: [
+  '../dataset/trashcan_detection.yml',
+  '../runtime.yml',
+  '../base/dataloader.yml',
+  '../base/optimizer.yml',
+  '../base/dfine_hgnetv2.yml',
+]
+output_dir: C:/Users/user/Desktop/blueSent-FE/backend/eval_output
+sync_bn: False
+checkpoint_freq: 1000
+HGNetv2:
+  name: 'B0'
+  return_idx: [1, 2, 3]
+  freeze_at: -1
+  freeze_norm: False
+  use_lab: True
+  pretrained: False
+HybridEncoder:
+  in_channels: [256, 512, 1024]
+  hidden_dim: 256
+  depth_mult: 0.34
+  expansion: 0.5
+DFINETransformer:
+  num_layers: 3
+  eval_idx: -1
+  num_queries: 100
+  activation: silu
+  mlp_act: silu
+PostProcessor:
+  num_top_queries: 100
+optimizer:
+  type: AdamW
+  params:
+    -
+      params: '^(?=.*backbone)(?!.*norm|bn).*$'
+      lr: 0.0001000000
+    -
+      params: '^(?=.*backbone)(?=.*norm|bn).*$'
+      lr: 0.0001000000
+      weight_decay: 0.
+    -
+      params: '^(?=.*(?:encoder|decoder))(?=.*(?:norm|bn|bias)).*$'
+      weight_decay: 0.
+  lr: 0.0002000000
+  betas: [0.9, 0.999]
+  weight_decay: 0.0001000000
+epoches: 72
+lrsheduler: flatcosine
+lr_gamma: 0.5
+warmup_iter: 1000
+flat_epoch: 36
+no_aug_epoch: 8
+train_dataloader:
+  total_batch_size: 48
+  dataset:
+    transforms:
+      policy:
+        epoch: [4, 36, 64]
+  collate_fn:
+    base_size_repeat: ~     # multi-scale OFF: every batch is exactly 640x640
+    mixup_epochs: [4, 36]
+    stop_epoch: 64
+val_dataloader:
+  total_batch_size: 8

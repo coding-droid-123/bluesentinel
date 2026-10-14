@@ -1,144 +1,21 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import logo from '../assets/logo.png'
-
-// ── Alert logic ────────────────────────────────────────────────────────────
-const ALERT_PILE_THRESHOLD = 5
-const CLASS_WEIGHT = {
-  trash_net: 3, trash_rope: 3, trash_tarp: 2.5, trash_pipe: 2,
-  trash_wreckage: 2, trash_bag: 1.5, trash_bottle: 1, trash_cup: 1,
-  trash_can: 1.5, trash_container: 1.5, trash_clothing: 1,
-  trash_branch: 0.8, trash_snack_wrapper: 0.8, trash_unknown_instance: 1,
-}
-const GHOST_GEAR = new Set(['trash_net', 'trash_rope', 'trash_tarp'])
-const ANIMALS    = new Set(['animal_fish', 'animal_eel', 'animal_crab', 'animal_starfish', 'animal_etc', 'animal_shells'])
-
-const SEVERITY_COLOR = { critical: '#ef4444', high: '#f97316', medium: '#eab308', low: '#10b981' }
-const SEVERITY_BG    = { critical: '#fef2f2', high: '#fff7ed', medium: '#fefce8', low: '#f0fdf4' }
-
-// Map class → colour for bbox stroke
-const CLASS_COLORS = {
-  trash_net:'#ef4444', trash_rope:'#ef4444', trash_tarp:'#ef4444',
-  trash_wreckage:'#f97316', trash_pipe:'#f97316',
-  trash_bag:'#eab308', trash_bottle:'#eab308', trash_cup:'#eab308',
-  trash_can:'#eab308', trash_container:'#eab308',
-  trash_clothing:'#a855f7', trash_branch:'#a855f7', trash_snack_wrapper:'#a855f7',
-  animal_fish:'#10b981', animal_crab:'#10b981', animal_eel:'#10b981',
-  animal_starfish:'#10b981', animal_shells:'#10b981', animal_etc:'#10b981',
-  plant:'#22c55e', rov:'#3b82f6',
-}
-
-function getColor(cls) {
-  return CLASS_COLORS[cls] || '#60a5fa'
-}
-
-function evaluateAlerts(detections, frameNum) {
-  const alerts = []
-  const classes = detections.map((d) => d.class)
-  const hasAnimal = classes.some((c) => ANIMALS.has(c))
-  const gearFound = classes.filter((c) => GHOST_GEAR.has(c))
-
-  if (hasAnimal && gearFound.length > 0) {
-    const animal = classes.find((c) => ANIMALS.has(c))
-    alerts.push({
-      id: `entangle-${frameNum}-${Date.now()}`, type: 'ENTANGLEMENT',
-      message: `${animal.replace('animal_', '')} detected near ${gearFound[0].replace('trash_', '')} — possible entanglement`,
-      severity: 'critical', frame: frameNum, ts: new Date().toLocaleTimeString(),
-    })
-  } else if (gearFound.length > 0) {
-    gearFound.forEach((g) => alerts.push({
-      id: `gear-${frameNum}-${g}-${Date.now()}`, type: 'GHOST GEAR',
-      message: `${g.replace('trash_', '').toUpperCase()} detected — possible ghost gear`,
-      severity: 'critical', frame: frameNum, ts: new Date().toLocaleTimeString(),
-    }))
-  }
-  if (detections.length >= ALERT_PILE_THRESHOLD) {
-    alerts.push({
-      id: `pile-${frameNum}-${Date.now()}`, type: 'LARGE PILE',
-      message: `High debris density: ${detections.length} objects in frame ${frameNum}`,
-      severity: 'high', frame: frameNum, ts: new Date().toLocaleTimeString(),
-    })
-  }
-  return alerts
-}
-
-function weightedScore(detections) {
-  return detections.reduce((sum, d) => sum + (CLASS_WEIGHT[d.class] ?? 1) * (d.confidence ?? 0.8), 0)
-}
-
-// Draw bounding boxes on a canvas element from a detections array
-// detections: [{class, confidence, severity, box:[x1,y1,x2,y2]}]
-// box coords are in the natural video resolution; canvas is displayed at CSS size
-function drawBoxes(canvas, video, detections) {
-  if (!canvas || !video) return
-
-  const rect = video.getBoundingClientRect()
-  if (!rect.width || !rect.height) return
-
-  const dpr = window.devicePixelRatio || 1
-  canvas.width  = rect.width  * dpr
-  canvas.height = rect.height * dpr
-  canvas.style.width  = rect.width  + 'px'
-  canvas.style.height = rect.height + 'px'
-
-  const ctx = canvas.getContext('2d')
-  ctx.scale(dpr, dpr)
-  ctx.clearRect(0, 0, rect.width, rect.height)
-
-  if (!detections || !detections.length) return
-  if (!video.videoWidth || !video.videoHeight) return
-
-  // Exact scale factors from natural video coordinates to displayed canvas pixels
-  const scaleX = rect.width  / video.videoWidth
-  const scaleY = rect.height / video.videoHeight
-
-  for (const det of detections) {
-    if (!det.box || det.box.length < 4) continue
-    const [x1, y1, x2, y2] = det.box
-    const sx  = x1 * scaleX
-    const sy  = y1 * scaleY
-    const sw  = (x2 - x1) * scaleX
-    const sh  = (y2 - y1) * scaleY
-
-    if (sw <= 0 || sh <= 0) continue
-
-    const col = getColor(det.class)
-    const label = `${det.class.replace(/^(trash_|animal_)/, '')} ${(det.confidence * 100).toFixed(0)}%`
-    const fontSize = Math.max(11, Math.min(14, Math.round(sw / 8)))
-
-    // Box stroke
-    ctx.strokeStyle = col
-    ctx.lineWidth   = 2.5
-    ctx.strokeRect(sx, sy, sw, sh)
-
-    // Semi-transparent fill
-    ctx.fillStyle = col + '22'
-    ctx.fillRect(sx, sy, sw, sh)
-
-    // Corner accents for high-precision HUD look
-    const corner = Math.min(10, sw / 4, sh / 4)
-    ctx.strokeStyle = '#ffffff'
-    ctx.lineWidth = 2
-    ctx.beginPath()
-    ctx.moveTo(sx, sy + corner); ctx.lineTo(sx, sy); ctx.lineTo(sx + corner, sy)
-    ctx.moveTo(sx + sw - corner, sy); ctx.lineTo(sx + sw, sy); ctx.lineTo(sx + sw, sy + corner)
-    ctx.moveTo(sx, sy + sh - corner); ctx.lineTo(sx, sy + sh); ctx.lineTo(sx + corner, sy + sh)
-    ctx.moveTo(sx + sw - corner, sy + sh); ctx.lineTo(sx + sw, sy + sh); ctx.lineTo(sx + sw, sy + corner)
-    ctx.stroke()
-
-    // Label background
-    ctx.font = `bold ${fontSize}px 'Inter', sans-serif`
-    const textW = ctx.measureText(label).width + 8
-    const labelH = fontSize + 8
-    const labelY = sy > labelH ? sy - labelH : sy
-
-    ctx.fillStyle = col
-    ctx.fillRect(sx, labelY, textW, labelH)
-
-    // Label text
-    ctx.fillStyle = '#ffffff'
-    ctx.fillText(label, sx + 4, labelY + labelH - 4)
-  }
-}
+import NavBar from './NavBar'
+import SchematicMap from './SchematicMap'
+import { API_BASE_URL } from '../config'
+import { addHistoryRecord } from '../hooks/useHistory'
+import {
+  ALERT_PILE_THRESHOLD,
+  CLASS_WEIGHT,
+  GHOST_GEAR,
+  ANIMALS,
+  SEVERITY_COLOR,
+  SEVERITY_BG,
+  CLASS_COLORS,
+  getColor,
+  boxIoU,
+  drawBoxes,
+} from '../utils/drawing'
+import { evaluateAlerts, weightedScore } from '../utils/alerts'
 
 export default function ROVSimulator({ onNavigate }) {
   const [videoFile, setVideoFile]               = useState(null)
@@ -148,7 +25,6 @@ export default function ROVSimulator({ onNavigate }) {
   const [frameCount, setFrameCount]             = useState(0)
   const [currentDetections, setCurrentDetections] = useState([])
   const [alerts, setAlerts]                     = useState([])
-  const [pileRanking, setPileRanking]           = useState([])
   const [totalObjects, setTotalObjects]         = useState(0)
   const [fps, setFps]                           = useState(null)
   const [latency, setLatency]                   = useState(null)
@@ -163,6 +39,7 @@ export default function ROVSimulator({ onNavigate }) {
   const [frameInterval, setFrameInterval]       = useState(0)     // continuous detection pace (0 = auto)
 
   const videoRef         = useRef(null)
+  const videoUrlRef      = useRef(null)
   const canvasRef        = useRef(null) // hidden extraction canvas
   const overlayRef       = useRef(null) // visible overlay on video
   const fileInputRef     = useRef(null)
@@ -182,6 +59,24 @@ export default function ROVSimulator({ onNavigate }) {
   const boxHoldRef       = useRef(800)
   const frameIntervalRef = useRef(0)
 
+  // ── Multi-Object Tracking (MOT) state & refs ─────────────────────────────
+  const activeTracksRef   = useRef([]) // [{ id, box, class, lastFrame, lostFrames }]
+  const nextTrackIdRef    = useRef(1)
+  const uniqueCountRef    = useRef(0)
+  const classTallyRef     = useRef({})
+  const lastAlertFrameRef = useRef({})
+  const missionIdRef      = useRef(null)  // Active mission UUID from /missions/start
+  const entanglePersRef   = useRef({})    // Persistence gate for entanglement
+  const [missionLogStatus, setMissionLogStatus] = useState(null)
+
+  // ── Schematic Hotspot Map state ──────────────────────────────────────────
+  const [hotspotsData, setHotspotsData]   = useState({})
+  const [hotspotWindowSize, setHotspotWindowSize] = useState(10) // 10-frame evaluation window as requested
+  const hotspotWindowsRef = useRef({})  // { windowIdx: { uniqueObjects: Set, classesCount: {}, frameStart, frameEnd, frameDataUrl } }
+  const hotspotMinFrameRef = useRef(Infinity)
+  const hotspotMaxFrameRef = useRef(0)
+  const hotspotFrameCountRef = useRef(0)
+
   useEffect(() => { playModeRef.current = playMode }, [playMode])
   useEffect(() => { playbackSpeedRef.current = playbackSpeed }, [playbackSpeed])
   useEffect(() => { frameStepRef.current = frameStep }, [frameStep])
@@ -190,7 +85,7 @@ export default function ROVSimulator({ onNavigate }) {
 
   // Backend health check
   useEffect(() => {
-    fetch('http://localhost:8000/docs', { method: 'HEAD', mode: 'no-cors' })
+    fetch(`${API_BASE_URL}/docs`, { method: 'HEAD', mode: 'no-cors' })
       .then(() => setBackendOnline(true))
       .catch(() => setBackendOnline(false))
   }, [])
@@ -221,9 +116,18 @@ export default function ROVSimulator({ onNavigate }) {
     setVideoFile(file)
     if (videoUrl) URL.revokeObjectURL(videoUrl)
     const newUrl = URL.createObjectURL(file)
+    videoUrlRef.current = newUrl
     setVideoUrl(newUrl)
     handleReset()
     setErrorMsg('')
+    try {
+      addHistoryRecord({
+        type: 'rov',
+        label: file.name ? `ROV Survey — ${file.name}` : 'ROV Video Transect',
+        summary: { totalObjects: 0, debrisCount: 0, highestSeverity: 'medium', uniqueTypes: 0 },
+        location: 'ROV Underwater Transect',
+      })
+    } catch {}
     setTimeout(() => {
       if (videoRef.current) videoRef.current.load()
     }, 50)
@@ -239,6 +143,18 @@ export default function ROVSimulator({ onNavigate }) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
     return new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))
+  }, [])
+
+  // ── Capture frame as data URL (for thumbnails in piles/alerts) ───────────
+  const captureFrameDataUrl = useCallback(() => {
+    const video  = videoRef.current
+    const canvas = canvasRef.current
+    if (!video || !canvas || video.readyState < 2) return null
+    canvas.width  = video.videoWidth  || 640
+    canvas.height = video.videoHeight || 360
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.6)  // compact data URL
   }, [])
 
   // ── Send one frame to backend, draw boxes on response ─────────────────
@@ -258,7 +174,7 @@ export default function ROVSimulator({ onNavigate }) {
     try {
       const fd = new FormData()
       fd.append('file', blob, `frame_${fNum}.jpg`)
-      const res = await fetch('http://localhost:8000/detect?stream=true', {
+      const res = await fetch(`${API_BASE_URL}/detect?stream=true`, {
         method: 'POST', body: fd, signal: ctrl.signal,
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -269,56 +185,233 @@ export default function ROVSimulator({ onNavigate }) {
       setBackendOnline(true)
 
       // ── Parse detections ──────────────────────────────────────────────
-      const detections = (data.detections || []).map((d) => ({
+      const rawDetections = (data.detections || []).map((d) => ({
         class: d.class,
         confidence: d.confidence,
         severity: d.severity || 'medium',
         box: d.box,  // [x1, y1, x2, y2] in natural image pixels
       }))
 
-      // Update overlay canvas with new boxes
-      setCurrentDetections(detections)
+      // ── Multi-Object Tracking via IoU matching (eliminates duplicates) ───
+      const prevTracks = activeTracksRef.current
+      const matchedIndices = new Set()
+      const trackedDetections = []
 
-      // Stats
+      for (const det of rawDetections) {
+        let bestIoU = 0
+        let bestIdx = -1
+
+        for (let i = 0; i < prevTracks.length; i++) {
+          if (matchedIndices.has(i)) continue
+          if (prevTracks[i].class === det.class) {
+            const iou = boxIoU(prevTracks[i].box, det.box)
+            if (iou > bestIoU && iou >= 0.35) {
+              bestIoU = iou
+              bestIdx = i
+            }
+          }
+        }
+
+        let trackId
+        if (bestIdx >= 0) {
+          // Matched an existing object track
+          matchedIndices.add(bestIdx)
+          trackId = prevTracks[bestIdx].id
+          prevTracks[bestIdx].box = det.box
+          prevTracks[bestIdx].lastFrame = fNum
+          prevTracks[bestIdx].lostFrames = 0
+        } else {
+          // New unique object detected
+          trackId = nextTrackIdRef.current++
+          // Stop counting ROV vehicle or machinery as cleanup debris
+          if (det.class !== 'rov') {
+            uniqueCountRef.current += 1
+            classTallyRef.current[det.class] = (classTallyRef.current[det.class] || 0) + 1
+          }
+          prevTracks.push({
+            id: trackId,
+            box: det.box,
+            class: det.class,
+            lastFrame: fNum,
+            lostFrames: 0,
+          })
+        }
+        trackedDetections.push({ ...det, trackId })
+      }
+
+      // Evict lost tracks if not seen for > 8 frames
+      for (let i = prevTracks.length - 1; i >= 0; i--) {
+        if (!matchedIndices.has(i) && prevTracks[i].lastFrame !== fNum) {
+          prevTracks[i].lostFrames += 1
+          if (prevTracks[i].lostFrames > 8) {
+            prevTracks.splice(i, 1)
+          }
+        }
+      }
+      activeTracksRef.current = prevTracks
+
+      // Update overlay canvas with tracked boxes
+      setCurrentDetections(trackedDetections)
+
+      // Stats: Cumulative count is strictly UNIQUE tracked objects
       setFrameCount(fNum)
-      setTotalObjects((t) => t + detections.length)
+      setTotalObjects(uniqueCountRef.current)
 
       framesSentRef.current += 1
       const elapsed = (Date.now() - startTimeRef.current) / 1000
       if (elapsed > 0) setFps((framesSentRef.current / elapsed).toFixed(1))
 
-      // Alerts
-      const newAlerts = evaluateAlerts(detections, fNum)
-      if (newAlerts.length > 0) setAlerts((a) => [...newAlerts, ...a].slice(0, 80))
+      // Alerts & automatic triage incident dispatch
+      const alertFrameDataUrl = captureFrameDataUrl()
+      const newAlerts = evaluateAlerts(trackedDetections, fNum, entanglePersRef)
+      if (newAlerts.length > 0) {
+        // Attach frame snapshot and detection list to each alert
+        const alertsWithFrame = newAlerts.map((alt) => ({
+          ...alt,
+          frameDataUrl: alertFrameDataUrl,
+          detections: trackedDetections.map((d) => ({ class: d.class, confidence: d.confidence, severity: d.severity })),
+        }))
+        setAlerts((a) => [...alertsWithFrame, ...a].slice(0, 80))
 
-      // Pile ranking
-      if (detections.length > 0) {
-        const entry = {
-          frameId: `F${fNum}`,
-          count: detections.length,
-          score: weightedScore(detections),
-          topClass: detections[0]?.class,
-          severity: detections.reduce((max, d) => {
-            const R = { critical: 4, high: 3, medium: 2, low: 1 }
-            return (R[d.severity] ?? 1) > (R[max] ?? 1) ? d.severity : max
-          }, 'low'),
+        // Auto-post critical emergencies to database /incidents
+        for (const alt of newAlerts) {
+          if (alt.severity === 'critical') {
+            const lastSeen = lastAlertFrameRef.current[alt.type] || 0
+            if (fNum - lastSeen >= 6) {
+              lastAlertFrameRef.current[alt.type] = fNum
+              try {
+                const incFd = new FormData()
+                if (missionIdRef.current) incFd.append('mission_id', missionIdRef.current)
+                incFd.append('incident_type', alt.type)
+                incFd.append('severity', alt.severity)
+                incFd.append('frame_number', fNum)
+                incFd.append('timestamp_sec', videoRef.current?.currentTime || 0)
+                incFd.append('description', alt.message)
+                if (alt.animal) incFd.append('animal_species', alt.animal)
+                if (alt.gear) incFd.append('gear_type', alt.gear)
+                if (blob) incFd.append('snapshot', blob, `incident_f${fNum}.jpg`)
+
+                fetch(`${API_BASE_URL}/incidents`, {
+                  method: 'POST',
+                  body: incFd,
+                }).catch((e) => console.warn('Incident log warning:', e))
+              } catch (e) {
+                console.warn('Failed to upload incident snapshot:', e)
+              }
+            }
+          }
         }
-        pileAccRef.current = [...pileAccRef.current, entry]
-          .sort((a, b) => b.score - a.score)
-          .slice(0, 5)
-        setPileRanking([...pileAccRef.current])
       }
+
+      // ── Schematic Hotspot & Debris Pile Aggregation (10-frame windows) ──
+      // Look at 10-frame increments and create distinct piles with frame thumbnails
+      // ONLY count harmful objects (critical, high, medium severity; strictly ignore low severity / biota)
+      const ws = hotspotWindowSize || 10
+      const windowIdx = Math.floor((fNum - 1) / ws)
+
+      if (!hotspotWindowsRef.current[windowIdx]) {
+        hotspotWindowsRef.current[windowIdx] = {
+          uniqueObjects: new Set(),
+          classesCount: {},
+          frameStart: windowIdx * ws + 1,
+          frameEnd: (windowIdx + 1) * ws,
+          frameDataUrl: null,
+          hasHazard: false,
+        }
+      }
+      const win = hotspotWindowsRef.current[windowIdx]
+
+      for (const det of trackedDetections) {
+        // Only count harmful debris objects (strictly exclude ROV, plant, and marine fauna)
+        if (det.class === 'rov' || det.class === 'plant' || det.class.startsWith('animal_')) continue
+        if (!det.severity || det.severity === 'low') continue
+        const objKey = `${det.trackId}::${det.class}`
+        if (!win.uniqueObjects.has(objKey)) {
+          win.uniqueObjects.add(objKey)
+          win.classesCount[det.class] = (win.classesCount[det.class] || 0) + 1
+        }
+        win.hasHazard = true
+      }
+
+      // Capture frame thumbnail for this 10-frame pile if not yet captured and harmful debris is present
+      const harmfulDets = trackedDetections.filter((d) => d.severity && d.severity !== 'low')
+      if (harmfulDets.length > 0 && !win.frameDataUrl) {
+        win.frameDataUrl = captureFrameDataUrl()
+      }
+
+      hotspotMinFrameRef.current = Math.min(hotspotMinFrameRef.current, fNum)
+      hotspotMaxFrameRef.current = Math.max(hotspotMaxFrameRef.current, fNum)
+      hotspotFrameCountRef.current += 1
+
+      // Rebuild pile list for SchematicMap
+      const zoneName = videoFile?.name
+        ? (videoFile.name.match(/(vid_\d+)/i)?.[1]?.toLowerCase() || 'rov_dive')
+        : 'rov_dive'
+      const minF = hotspotMinFrameRef.current
+      const maxF = hotspotMaxFrameRef.current
+
+      // Filter to 10-frame windows that contain detections / debris
+      const spotList = Object.entries(hotspotWindowsRef.current)
+        .sort(([a], [b]) => Number(a) - Number(b))
+        .filter(([, w]) => w.uniqueObjects.size > 0)
+        .map(([wIdx, w], pileSeqIdx) => {
+          let score = 0
+          let dominantCls = null
+          let maxCount = 0
+          let debrisCount = 0
+          for (const [cls, cnt] of Object.entries(w.classesCount)) {
+            const isTrash = cls.startsWith('trash_') || GHOST_GEAR.has(cls)
+            if (isTrash) debrisCount += cnt
+            score += (CLASS_WEIGHT[cls] ?? 1) * cnt
+            if (cnt > maxCount) { maxCount = cnt; dominantCls = cls }
+          }
+          score = Math.round(score * 100) / 100
+
+          // Determine severity tier
+          let severity = 'low'
+          const hasGhostGear = Object.keys(w.classesCount).some((c) => GHOST_GEAR.has(c))
+          if (hasGhostGear || score >= 12) severity = 'critical'
+          else if (score >= 6 || w.hasHazard) severity = 'high'
+          else if (score >= 2) severity = 'medium'
+
+          return {
+            zone: zoneName,
+            pile_id: `pile_${Number(wIdx) + 1}`,
+            pile_number: pileSeqIdx + 1,
+            window_index: Number(wIdx),
+            frame_start: w.frameStart,
+            frame_end: w.frameEnd,
+            score,
+            severity,
+            object_count: debrisCount > 0 ? debrisCount : w.uniqueObjects.size,
+            debris_count: debrisCount,
+            dominant_class: dominantCls || 'trash_debris',
+            classes: { ...w.classesCount },
+            frameDataUrl: w.frameDataUrl || null,
+          }
+        })
+
+      setHotspotsData({
+        [zoneName]: {
+          min_frame: minF,
+          max_frame: maxF,
+          total_frames_processed: hotspotFrameCountRef.current,
+          hotspots: spotList,
+        },
+      })
     } catch (err) {
       if (err.name === 'AbortError') return
-      setBackendOnline(false)
+      if (err.message?.includes('HTTP') || err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
+        setBackendOnline(false)
+      }
       setErrorMsg(`Frame ${fNum}: ${err.message}`)
     } finally {
       isProcessingRef.current = false
     }
   }, [extractFrame])
 
-  // Internal stop helper
-  const handleStopInternal = useCallback(() => {
+  // Internal stop helper with automated survey mission database logging
+  const handleStopInternal = useCallback(async () => {
     if (loopTimerRef.current) clearTimeout(loopTimerRef.current)
     isRunningRef.current = false
     isPausedRef.current = false
@@ -327,7 +420,93 @@ export default function ROVSimulator({ onNavigate }) {
     setIsRunning(false)
     setIsPaused(false)
     setStatus('done')
-  }, [])
+
+    // Persist completed mission summary to backend /missions/finish
+    if (frameNumRef.current > 0) {
+      const elapsedSec = startTimeRef.current
+        ? Math.max(0.1, (Date.now() - startTimeRef.current) / 1000)
+        : 0.1
+      const currentFps = framesSentRef.current > 0
+        ? parseFloat((framesSentRef.current / elapsedSec).toFixed(1))
+        : 0
+
+      const payload = {
+        name: videoFile ? `ROV Survey - ${videoFile.name}` : `ROV Survey ${new Date().toLocaleTimeString()}`,
+        video_source: videoFile ? videoFile.name : 'rov_stream',
+        duration_sec: parseFloat(elapsedSec.toFixed(1)),
+        total_frames: frameNumRef.current,
+        total_unique_objects: uniqueCountRef.current,
+        fps: currentFps,
+        model_format: modelFormat,
+        avg_latency_ms: latency || 0,
+        summary_by_class: classTallyRef.current,
+        hotspots: Object.entries(hotspotWindowsRef.current)
+          .filter(([, w]) => w.uniqueObjects.size > 0)
+          .map(([wIdx, w]) => ({
+            frame_number: w.frameStart,
+            debris_count: w.uniqueObjects.size,
+            weighted_score: w.hasHazard ? 10 : 2,
+            dominant_class: Object.keys(w.classesCount)[0] || 'trash_debris',
+          })),
+        schematic_hotspots: Object.entries(hotspotWindowsRef.current)
+          .map(([wIdx, w]) => ({
+            window_index: Number(wIdx),
+            frame_start: w.frameStart,
+            frame_end: w.frameEnd,
+            object_count: w.uniqueObjects.size,
+            classes: { ...w.classesCount },
+          })),
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/missions/finish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (res.ok) {
+          const resData = await res.json()
+          setMissionLogStatus({ success: true, missionId: resData.mission_id })
+        }
+      } catch (err) {
+        console.warn('Failed to save survey mission:', err)
+        setMissionLogStatus({ success: false, error: err.message })
+      }
+
+      // Record survey mission in persistent history
+      try {
+        const allWindows = Object.values(hotspotWindowsRef.current || {})
+        let totalHarmful = 0
+        let highestSev = 'low'
+        const sevRank = { critical: 4, high: 3, medium: 2, low: 1 }
+        allWindows.forEach((w) => {
+          totalHarmful += w.uniqueObjects.size
+          if (w.hasHazard && (sevRank[highestSev] < 3)) highestSev = 'high'
+        })
+        if (alerts.some((a) => a.severity === 'critical')) highestSev = 'critical'
+
+        const sampleThumb = allWindows.find((w) => w.frameDataUrl)?.frameDataUrl || captureFrameDataUrl()
+
+        addHistoryRecord({
+          type: 'rov',
+          label: videoFile ? videoFile.name : `ROV Survey (${frameNumRef.current} frames)`,
+          summary: {
+            totalObjects: uniqueCountRef.current,
+            debrisCount: totalHarmful,
+            highestSeverity: highestSev,
+            uniqueTypes: Object.keys(classTallyRef.current || {}).length,
+          },
+          thumbnailDataUrl: sampleThumb,
+          inventory: Object.entries(classTallyRef.current || {})
+            .filter(([cls]) => cls.startsWith('trash_'))
+            .map(([cls, cnt]) => ({ class: cls, count: cnt })),
+          location: 'ROV Underwater Transect',
+        })
+      } catch (histErr) {
+        console.warn('Failed to record ROV mission to history:', histErr)
+      }
+    }
+  }, [videoFile, modelFormat, latency, alerts])
 
   // ── Step-through detection loop ───────────────────────────────────────
   // Video is PAUSED at current position, runs inference, draws boxes directly
@@ -426,6 +605,20 @@ export default function ROVSimulator({ onNavigate }) {
     startTimeRef.current = Date.now()
     framesSentRef.current = 0
 
+    // Register mission in background (fire-and-forget) — never blocks detection start
+    fetch(`${API_BASE_URL}/missions/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: videoFile ? `ROV Survey - ${videoFile.name}` : `ROV Survey ${new Date().toLocaleTimeString()}`,
+        video_source: videoFile ? videoFile.name : 'rov_stream',
+        model_format: modelFormat,
+      }),
+    })
+      .then((res) => res.ok ? res.json() : null)
+      .then((d) => { if (d?.mission_id) missionIdRef.current = d.mission_id })
+      .catch(() => { missionIdRef.current = null })
+
     if (playModeRef.current === 'step') {
       videoRef.current.pause()
       stepDetectLoop()
@@ -483,13 +676,25 @@ export default function ROVSimulator({ onNavigate }) {
     setCurrentDetections([])
     latestDetsRef.current = []
     setAlerts([])
-    setPileRanking([])
     setTotalObjects(0)
     setFps(null)
     setLatency(null)
     frameNumRef.current = 0
     framesSentRef.current = 0
     pileAccRef.current = []
+    activeTracksRef.current = []
+    nextTrackIdRef.current = 1
+    uniqueCountRef.current = 0
+    classTallyRef.current = {}
+    lastAlertFrameRef.current = {}
+    entanglePersRef.current = {}
+    missionIdRef.current = null
+    setMissionLogStatus(null)
+    hotspotWindowsRef.current = {}
+    hotspotMinFrameRef.current = Infinity
+    hotspotMaxFrameRef.current = 0
+    hotspotFrameCountRef.current = 0
+    setHotspotsData({})
     setStatus('idle')
   }
 
@@ -505,25 +710,14 @@ export default function ROVSimulator({ onNavigate }) {
   useEffect(() => () => {
     if (loopTimerRef.current) clearTimeout(loopTimerRef.current)
     abortRef.current?.abort()
+    if (videoUrlRef.current) {
+      URL.revokeObjectURL(videoUrlRef.current)
+    }
   }, [])
 
   return (
     <div className="home-page">
-      {/* NAV */}
-      <nav className="home-nav">
-        <div className="home-nav-inner" style={{ justifyContent: 'space-between' }}>
-          <button className="home-logo" style={{ background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => onNavigate('home')}>
-            <img src={logo} alt="Blue Sentinel" className="home-logo-img" />
-            <span className="home-logo-text">Blue Sentinel</span>
-          </button>
-          <div className="home-nav-links">
-            <button className="home-nav-link" onClick={() => onNavigate('home')}>Home</button>
-            <button className="home-nav-link home-nav-link-active">ROV Simulator</button>
-            <button className="home-nav-link" onClick={() => onNavigate('optimizer')}>Optimizer</button>
-            <button className="home-nav-link" onClick={() => onNavigate('about')}>About</button>
-          </div>
-        </div>
-      </nav>
+      <NavBar page="rov" onNavigate={onNavigate} />
 
       {/* HERO */}
       <section className="upload-hero" style={{ background: 'linear-gradient(135deg,#0a1f3a 0%,#0d3260 40%,#0e5e48 100%)' }}>
@@ -545,7 +739,7 @@ export default function ROVSimulator({ onNavigate }) {
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             {/* File picker */}
             <button onClick={() => fileInputRef.current?.click()} style={{ background: 'rgba(255,255,255,0.15)', border: '1px solid rgba(255,255,255,0.3)', color: '#fff', fontWeight: 600, fontSize: 12, padding: '8px 16px', borderRadius: 8, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              {videoFile ? `📹 ${videoFile.name.slice(0, 24)}…` : '📁 Select Video'}
+              {videoFile?.name ? `📹 ${videoFile.name.slice(0, 24)}…` : '📁 Select Video'}
             </button>
             <input ref={fileInputRef} type="file" accept="video/mp4,video/webm,video/ogg,video/quicktime" style={{ display: 'none' }} onChange={handleVideoSelect} />
 
@@ -687,6 +881,16 @@ export default function ROVSimulator({ onNavigate }) {
             </p>
           )}
           {errorMsg && <p style={{ marginTop: 8, fontSize: 12, color: '#fde68a' }}>⚠️ {errorMsg}</p>}
+          {missionLogStatus && (
+            <div style={{ marginTop: 10, fontSize: 12, background: missionLogStatus.success ? 'rgba(16,185,129,0.18)' : 'rgba(239,68,68,0.18)', border: `1px solid ${missionLogStatus.success ? '#10b981' : '#ef4444'}`, color: '#fff', padding: '8px 14px', borderRadius: 8, display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+              <span>{missionLogStatus.success ? '✅' : '⚠️'}</span>
+              <span>
+                {missionLogStatus.success
+                  ? `Survey Mission Logged to Database (ID: ${missionLogStatus.missionId ? missionLogStatus.missionId.slice(0, 8) : ''}…)`
+                  : `Failed to save mission to DB: ${missionLogStatus.error}`}
+              </span>
+            </div>
+          )}
         </div>
       </section>
 
@@ -696,7 +900,7 @@ export default function ROVSimulator({ onNavigate }) {
           <div className="upload-stats-row" style={{ marginBottom: 0 }}>
             {[
               { label: 'FRAMES SENT', value: frameCount, sub: fps ? `${fps} sends/sec` : 'waiting…' },
-              { label: 'OBJECTS DETECTED', value: totalObjects, sub: 'cumulative across frames' },
+              { label: 'DEBRIS DETECTED', value: totalObjects, sub: 'unique tracked debris (excluding ROV)' },
               { label: 'ALERTS', value: alerts.length, sub: 'critical events only', color: alerts.length > 0 ? '#ef4444' : undefined },
               { label: 'INFERENCE LATENCY', value: latency ? `${latency} ms` : '—', sub: `${modelFormat} · Port 8000`, color: latency && latency < 800 ? '#10b981' : latency ? '#f97316' : undefined },
             ].map((s) => (
@@ -831,74 +1035,24 @@ export default function ROVSimulator({ onNavigate }) {
             <canvas ref={canvasRef} style={{ display: 'none' }} />
           </div>
 
-          {/* RIGHT: Alerts + Pile Ranking */}
+          {/* RIGHT: Schematic Hotspot Map, Alerts + Pile Ranking */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
 
-            {/* Alert log */}
-            <div className="home-card" style={{ padding: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <p className="home-card-num" style={{ margin: 0 }}>⚡ ALERT LOG</p>
-                {alerts.length > 0 && (
-                  <span style={{ background: '#fef2f2', color: '#ef4444', border: '1px solid #fecaca', borderRadius: 999, padding: '2px 10px', fontSize: 11, fontWeight: 700 }}>
-                    {alerts.length} ACTIVE
-                  </span>
-                )}
+            {/* Schematic Transect Hotspot Map */}
+            <div className="home-card" style={{ padding: 18 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <p className="home-card-num" style={{ margin: 0 }}>🗺️ SCHEMATIC HOTSPOT MAP</p>
+                <span style={{ fontSize: 11, color: '#6a9ab0' }}>No GPS Required · Transect Windows</span>
               </div>
-              <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {alerts.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '28px 0', color: '#6a9ab0', fontSize: 13 }}>
-                    {isRunning ? '🔍 Monitoring for critical events…' : '✅ No alerts — start the simulator'}
-                  </div>
-                ) : alerts.map((alert) => (
-                  <div key={alert.id} style={{ background: alert.severity === 'critical' ? '#fef2f2' : '#fff7ed', border: `1px solid ${SEVERITY_COLOR[alert.severity]}40`, borderLeft: `3px solid ${SEVERITY_COLOR[alert.severity]}`, borderRadius: 8, padding: '9px 12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', color: SEVERITY_COLOR[alert.severity] }}>🚨 {alert.type}</span>
-                      <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>{alert.ts} &middot; F{alert.frame}</span>
-                    </div>
-                    <p style={{ fontSize: 12, color: '#1a3a4a', marginTop: 4, lineHeight: 1.4 }}>{alert.message}</p>
-                  </div>
-                ))}
-              </div>
+              <SchematicMap
+                hotspots={hotspotsData}
+                windowSize={hotspotWindowSize}
+                onWindowSizeChange={setHotspotWindowSize}
+                onNavigate={onNavigate}
+              />
             </div>
 
-            {/* Pile ranking */}
-            <div className="home-card" style={{ padding: 20 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-                <p className="home-card-num" style={{ margin: 0 }}>📊 PILE RANKING</p>
-                <span style={{ fontSize: 11, color: '#6a9ab0' }}>Weighted by class hazard</span>
-              </div>
-              {pileRanking.length === 0 ? (
-                <p style={{ textAlign: 'center', color: '#6a9ab0', fontSize: 13, padding: '20px 0' }}>
-                  Ranking builds as frames are processed…
-                </p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {pileRanking.map((pile, rank) => (
-                    <div key={pile.frameId + rank} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: rank === 0 ? '#fffbeb' : '#f8fbfd', border: `1px solid ${rank === 0 ? '#fcd34d40' : '#e0eef5'}`, borderRadius: 10 }}>
-                      <span style={{ width: 22, height: 22, borderRadius: '50%', background: rank === 0 ? '#fbbf24' : rank === 1 ? '#94a3b8' : '#cd7c3a', color: '#fff', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{rank + 1}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: 12, fontWeight: 700, color: '#0f2030' }}>{pile.frameId}</span>
-                          <span style={{ background: SEVERITY_BG[pile.severity], color: SEVERITY_COLOR[pile.severity], border: `1px solid ${SEVERITY_COLOR[pile.severity]}40`, borderRadius: 999, padding: '1px 7px', fontSize: 10, fontWeight: 700 }}>{pile.severity}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 3 }}>
-                          <span style={{ fontSize: 11, color: '#6a9ab0' }}>{pile.count} obj &middot; score {pile.score.toFixed(1)}</span>
-                          <span style={{ fontSize: 11, color: '#6a9ab0' }}>{(pile.topClass || '').replace(/^(trash_|animal_)/, '')}</span>
-                        </div>
-                        <div style={{ height: 3, background: '#e0eef5', borderRadius: 999, overflow: 'hidden', marginTop: 5 }}>
-                          <div style={{ height: '100%', background: SEVERITY_COLOR[pile.severity], width: `${Math.min(100, (pile.score / 12) * 100)}%`, borderRadius: 999, transition: 'width 0.4s ease' }} />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {pileRanking.length > 0 && (
-                <p style={{ fontSize: 11, color: '#6a9ab0', marginTop: 10, fontStyle: 'italic' }}>
-                  Net/rope = 3x weight, bottles = 1x. Cleanup should prioritize Rank #1.
-                </p>
-              )}
-            </div>
+
 
             {/* Limitations */}
             <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 12, padding: '14px 16px' }}>

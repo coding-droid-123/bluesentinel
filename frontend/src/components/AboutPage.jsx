@@ -1,23 +1,10 @@
 import React from 'react'
-import logo from '../assets/logo.png'
+import NavBar from './NavBar'
 
 export default function AboutPage({ onNavigate }) {
   return (
     <div className="home-page">
-      <nav className="home-nav">
-        <div className="home-nav-inner" style={{ justifyContent: 'space-between' }}>
-          <button className="home-logo" style={{ background: 'none', border: 'none', cursor: 'pointer' }} onClick={() => onNavigate('home')}>
-            <img src={logo} alt="Blue Sentinel" className="home-logo-img" />
-            <span className="home-logo-text">Blue Sentinel</span>
-          </button>
-          <div className="home-nav-links">
-            <button className="home-nav-link" onClick={() => onNavigate('home')}>Home</button>
-            <button className="home-nav-link" onClick={() => onNavigate('rov')}>ROV Simulator</button>
-            <button className="home-nav-link" onClick={() => onNavigate('optimizer')}>Optimizer</button>
-            <button className="home-nav-link home-nav-link-active">About</button>
-          </div>
-        </div>
-      </nav>
+      <NavBar page="about" onNavigate={onNavigate} />
 
       {/* HERO */}
       <section className="home-hero" style={{ padding: '56px 32px 64px' }}>

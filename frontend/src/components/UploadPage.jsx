@@ -1,18 +1,6 @@
 import React, { useRef } from 'react'
-import logo from '../assets/logo.png'
-
-const SEVERITY_COLOR = {
-  critical: '#ef4444',
-  high: '#f97316',
-  medium: '#eab308',
-  low: '#10b981',
-}
-const SEVERITY_BG = {
-  critical: '#fef2f2',
-  high: '#fff7ed',
-  medium: '#fefce8',
-  low: '#f0fdf4',
-}
+import NavBar from './NavBar'
+import { SEVERITY_COLOR, SEVERITY_BG } from '../utils/drawing'
 
 export default function UploadPage({
   imageSrc,
@@ -36,20 +24,7 @@ export default function UploadPage({
   if (!imageSrc) {
     return (
       <div className="home-page">
-        <nav className="home-nav">
-          <div className="home-nav-inner" style={{ justifyContent: 'space-between' }}>
-            <button className="home-logo" style={{ background: 'none', border: 'none', cursor: 'pointer' }} onClick={onClear}>
-              <img src={logo} alt="Blue Sentinel" className="home-logo-img" />
-              <span className="home-logo-text">Blue Sentinel</span>
-            </button>
-            <div className="home-nav-links">
-              <button className="home-nav-link" onClick={onClear}>Home</button>
-              <button className="home-nav-link" onClick={() => onNavigate('rov')}>ROV Simulator</button>
-              <button className="home-nav-link" onClick={() => onNavigate('optimizer')}>Optimizer</button>
-              <button className="home-nav-link" onClick={() => onNavigate('about')}>About</button>
-            </div>
-          </div>
-        </nav>
+        <NavBar page="dashboard" onNavigate={onNavigate} onClear={onClear} />
 
         <section className="upload-hero">
           <div className="home-hero-inner">
@@ -105,26 +80,7 @@ export default function UploadPage({
 
   return (
     <div className="home-page">
-      {/* ── NAVBAR ── */}
-      <nav className="home-nav">
-        <div className="home-nav-inner" style={{ justifyContent: 'space-between' }}>
-          <button
-            className="home-logo"
-            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
-            onClick={onClear}
-          >
-            <img src={logo} alt="Blue Sentinel" className="home-logo-img" />
-            <span className="home-logo-text">Blue Sentinel</span>
-          </button>
-
-          <div className="home-nav-links">
-            <button className="home-nav-link" onClick={onClear}>Home</button>
-            <button className="home-nav-link" onClick={() => onNavigate('rov')}>ROV Simulator</button>
-            <button className="home-nav-link" onClick={() => onNavigate('optimizer')}>Optimizer</button>
-            <button className="home-nav-link" onClick={() => onNavigate('about')}>About</button>
-          </div>
-        </div>
-      </nav>
+      <NavBar page="dashboard" onNavigate={onNavigate} onClear={onClear} />
 
       {/* ── HERO STRIP ── */}
       <section className="upload-hero">
@@ -138,7 +94,7 @@ export default function UploadPage({
             <br />
             <em className="home-hero-italic">Analysis</em>
           </h1>
-          {fileMeta && (
+          {fileMeta?.name && (
             <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, marginTop: 4 }}>
               📁 {fileMeta.name} &nbsp;·&nbsp; {fileMeta.size}
             </p>
@@ -210,6 +166,24 @@ export default function UploadPage({
                   disabled={isAnalyzing}
                 >
                   ↺ Replace
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    background: 'transparent',
+                    border: '1.5px solid #cbd5e1',
+                    borderRadius: 8,
+                    padding: '8px 14px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: '#64748b',
+                    cursor: isAnalyzing ? 'not-allowed' : 'pointer',
+                  }}
+                  onClick={onClear}
+                  disabled={isAnalyzing}
+                  title="Clear this scan and return to homepage"
+                >
+                  ✕ Clear
                 </button>
                 <input
                   ref={replaceRef}

@@ -1,11 +1,79 @@
-"""BlueSentinel — SQLAlchemy ORM models for scan_batches and detections."""
+"""BlueSentinel — Production SQLAlchemy ORM models for ROV Simulator, Severity & Optimizer.
 
+Portable across PostgreSQL (asyncpg) and SQLite (aiosqlite) via TypeDecorator
+adapters for UUID and JSONB types.
+"""
+
+import json
 import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Column, String, Float, Integer, DateTime, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.types import TypeDecorator, CHAR, TEXT
+
+# Try to import PostgreSQL-native types; fall back gracefully
+try:
+    from sqlalchemy.dialects.postgresql import UUID as PG_UUID, JSONB as PG_JSONB
+    _HAS_PG = True
+except ImportError:
+    _HAS_PG = False
+
+
+# ---------------------------------------------------------------------------
+# Portable UUID type — native UUID on PostgreSQL, CHAR(36) on SQLite
+# ---------------------------------------------------------------------------
+class UUID(TypeDecorator):
+    """Platform-independent UUID type."""
+    impl = CHAR(36)
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql" and _HAS_PG:
+            return dialect.type_descriptor(PG_UUID(as_uuid=True))
+        return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value if isinstance(value, uuid.UUID) else uuid.UUID(str(value))
+        return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        return uuid.UUID(str(value))
+
+
+# ---------------------------------------------------------------------------
+# Portable JSONB type — native JSONB on PostgreSQL, TEXT (JSON) on SQLite
+# ---------------------------------------------------------------------------
+class JSONB(TypeDecorator):
+    """Platform-independent JSONB type."""
+    impl = TEXT
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == "postgresql" and _HAS_PG:
+            return dialect.type_descriptor(PG_JSONB())
+        return dialect.type_descriptor(TEXT())
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        if dialect.name == "postgresql":
+            return value  # asyncpg handles dict→jsonb natively
+        return json.dumps(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        if isinstance(value, (dict, list)):
+            return value
+        return json.loads(value)
 
 
 class Base(DeclarativeBase):
@@ -13,75 +81,191 @@ class Base(DeclarativeBase):
     pass
 
 
-class ScanBatch(Base):
-    """A single scan/upload event — one image, many detections."""
 
-    __tablename__ = "scan_batches"
+# ── Feature 1: ROV Simulator / Mission Logs ───────────────────────────────────
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    filename = Column(String, nullable=False)
-    image_path = Column(String, nullable=False)
-    total_detections = Column(Integer, nullable=False, default=0)
+class SurveyMission(Base):
+    """A single ROV video survey / dive mission session."""
 
-    # Future geofencing — nullable for now
-    gps_lat = Column(Float, nullable=True)
-    gps_lon = Column(Float, nullable=True)
-    geofence_zone = Column(String, nullable=True)
+    __tablename__ = "survey_missions"
 
+    id = Column(UUID(), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)
+    video_source = Column(String, nullable=False)
+    duration_sec = Column(Float, default=0.0)
+    total_frames = Column(Integer, default=0)
+    total_unique_objects = Column(Integer, default=0)
+    fps = Column(Float, nullable=True)
+    model_format = Column(String, default="ONNX")
+    avg_latency_ms = Column(Float, nullable=True)
+    summary_by_class = Column(JSONB, default=dict)  # {"trash_bottle": 14, "trash_net": 2}
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
 
-    # Relationship
-    detections = relationship("Detection", back_populates="batch", cascade="all, delete-orphan")
+    # Relationships
+    incidents = relationship("MissionIncident", back_populates="mission", cascade="all, delete-orphan")
+    hotspots = relationship("DebrisHotspot", back_populates="mission", cascade="all, delete-orphan")
 
     def to_dict(self):
         return {
             "id": str(self.id),
-            "filename": self.filename,
-            "image_path": self.image_path,
-            "total_detections": self.total_detections,
-            "gps_lat": self.gps_lat,
-            "gps_lon": self.gps_lon,
-            "geofence_zone": self.geofence_zone,
+            "name": self.name,
+            "video_source": self.video_source,
+            "duration_sec": self.duration_sec,
+            "total_frames": self.total_frames,
+            "total_unique_objects": self.total_unique_objects,
+            "fps": self.fps,
+            "model_format": self.model_format,
+            "avg_latency_ms": self.avg_latency_ms,
+            "summary_by_class": self.summary_by_class or {},
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "incident_count": len(self.incidents) if self.incidents else 0,
+        }
+
+
+# ── Feature 2: Severity Assessment & Emergency Triage ──────────────────────────
+
+class MissionIncident(Base):
+    """High-priority ecological emergency event flagged during an ROV dive."""
+
+    __tablename__ = "mission_incidents"
+
+    id = Column(UUID(), primary_key=True, default=uuid.uuid4)
+    mission_id = Column(UUID(), ForeignKey("survey_missions.id", ondelete="CASCADE"), nullable=False)
+    incident_type = Column(String, nullable=False)  # ENTANGLEMENT, GHOST_GEAR, LARGE_PILE
+    severity = Column(String, nullable=False, default="critical")  # critical, high, medium
+    frame_number = Column(Integer, nullable=False)
+    timestamp_sec = Column(Float, nullable=True)
+    snapshot_url = Column(String, nullable=True)  # Saved JPEG thumbnail of the event
+    animal_species = Column(String, nullable=True)  # e.g. animal_crab
+    gear_type = Column(String, nullable=True)  # e.g. trash_net
+    description = Column(Text, nullable=False)
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    mission = relationship("SurveyMission", back_populates="incidents")
+
+    def to_dict(self):
+        return {
+            "id": str(self.id),
+            "mission_id": str(self.mission_id),
+            "incident_type": self.incident_type,
+            "severity": self.severity,
+            "frame_number": self.frame_number,
+            "timestamp_sec": self.timestamp_sec,
+            "snapshot_url": self.snapshot_url,
+            "animal_species": self.animal_species,
+            "gear_type": self.gear_type,
+            "description": self.description,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
 
 
-class Detection(Base):
-    """A single detected object within a scan batch."""
+class DebrisHotspot(Base):
+    """Top-ranked debris pile cluster for targeted recovery operations."""
 
-    __tablename__ = "detections"
+    __tablename__ = "debris_hotspots"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    batch_id = Column(UUID(as_uuid=True), ForeignKey("scan_batches.id", ondelete="CASCADE"), nullable=False)
-
-    class_name = Column(String, nullable=False)
-    confidence = Column(Float, nullable=False)
-    severity = Column(String, nullable=False, default="medium")
-    bbox_x1 = Column(Float, nullable=False)
-    bbox_y1 = Column(Float, nullable=False)
-    bbox_x2 = Column(Float, nullable=False)
-    bbox_y2 = Column(Float, nullable=False)
-
+    id = Column(UUID(), primary_key=True, default=uuid.uuid4)
+    mission_id = Column(UUID(), ForeignKey("survey_missions.id", ondelete="CASCADE"), nullable=False)
+    frame_number = Column(Integer, nullable=False)
+    debris_count = Column(Integer, nullable=False)
+    weighted_score = Column(Float, nullable=False)
+    dominant_class = Column(String, nullable=True)
+    snapshot_url = Column(String, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
 
-    # Relationship
-    batch = relationship("ScanBatch", back_populates="detections")
+    mission = relationship("SurveyMission", back_populates="hotspots")
 
     def to_dict(self):
         return {
             "id": str(self.id),
-            "batch_id": str(self.batch_id),
-            "class": self.class_name,
-            "confidence": self.confidence,
-            "severity": self.severity,
-            "box": [self.bbox_x1, self.bbox_y1, self.bbox_x2, self.bbox_y2],
+            "mission_id": str(self.mission_id),
+            "frame_number": self.frame_number,
+            "debris_count": self.debris_count,
+            "weighted_score": self.weighted_score,
+            "dominant_class": self.dominant_class,
+            "snapshot_url": self.snapshot_url,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+# ── Feature 3: Cleanup Optimizer & Logistics Dispatch ─────────────────────────
+
+class CleanupZone(Base):
+    """Geographic marine survey area and its accumulated debris inventory."""
+
+    __tablename__ = "cleanup_zones"
+
+    id = Column(UUID(), primary_key=True, default=uuid.uuid4)
+    name = Column(String, nullable=False)            # e.g. Coral Triangle Zone A
+    location_coords = Column(String, nullable=False) # e.g. Lat 2.3N, Lon 108.5E
+    travel_cost_usd = Column(Float, default=0.0)
+    debris_inventory = Column(JSONB, default=list)   # Feed from ROV surveys
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    plans = relationship("CleanupPlan", back_populates="zone", cascade="all, delete-orphan")
+
+    def to_dict(self):
+        return {
+            "id": str(self.id),
+            "name": self.name,
+            "location_coords": self.location_coords,
+            "travel_cost_usd": self.travel_cost_usd,
+            "debris_inventory": self.debris_inventory or [],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class CleanupPlan(Base):
+    """Generated cleanup work order with diver team size, tools, and cost range."""
+
+    __tablename__ = "cleanup_plans"
+
+    id = Column(UUID(), primary_key=True, default=uuid.uuid4)
+    zone_id = Column(UUID(), ForeignKey("cleanup_zones.id", ondelete="CASCADE"), nullable=False)
+    priority_rank = Column(Integer, default=1)
+    estimated_min_hours = Column(Float, nullable=False)
+    estimated_max_hours = Column(Float, nullable=False)
+    max_crew_required = Column(Integer, default=1)
+    required_equipment = Column(JSONB, default=list)  # ["cutters", "lift bags"]
+    estimated_min_cost = Column(Float, nullable=False)
+    estimated_max_cost = Column(Float, nullable=False)
+    dispatch_status = Column(String, default="draft")  # draft, approved, dispatched, completed
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    zone = relationship("CleanupZone", back_populates="plans")
+
+    def to_dict(self):
+        return {
+            "id": str(self.id),
+            "zone_id": str(self.zone_id),
+            "zone_name": self.zone.name if self.zone else None,
+            "priority_rank": self.priority_rank,
+            "estimated_min_hours": self.estimated_min_hours,
+            "estimated_max_hours": self.estimated_max_hours,
+            "max_crew_required": self.max_crew_required,
+            "required_equipment": self.required_equipment or [],
+            "estimated_min_cost": self.estimated_min_cost,
+            "estimated_max_cost": self.estimated_max_cost,
+            "dispatch_status": self.dispatch_status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react'
+import React, { useState, useRef, useCallback, useEffect } from 'react'
 import ReportPanel from './components/ReportPanel'
 import LoadingOverlay from './components/LoadingOverlay'
 import HomePage from './components/HomePage'
@@ -6,12 +6,30 @@ import AboutPage from './components/AboutPage'
 import UploadPage from './components/UploadPage'
 import ROVSimulator from './components/ROVSimulator'
 import CleanupOptimizer from './components/CleanupOptimizer'
+import BatchStreamPage from './components/BatchStreamPage'
+import HistoryPage from './components/HistoryPage'
+import { addHistoryRecord } from './hooks/useHistory'
+import { API_BASE_URL } from './config'
 
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#ea580c']
 
 function App() {
-  // pages: 'home' | 'about' | 'dashboard' | 'rov' | 'optimizer'
-  const [page, setPage] = useState('home')
+  // pages: 'home' | 'about' | 'dashboard' | 'rov' | 'optimizer' | 'batch' | 'history'
+  const [page, setPage] = useState(() => {
+    try {
+      return sessionStorage.getItem('bluesentinel_session_page') || 'home'
+    } catch {
+      return 'home'
+    }
+  })
+
+  // Sync active page to sessionStorage
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('bluesentinel_session_page', page)
+    } catch {}
+  }, [page])
+
   const [imageSrc, setImageSrc] = useState(null)
   const [annotatedSrc, setAnnotatedSrc] = useState(null)
   const [selectedFile, setSelectedFile] = useState(null)
@@ -32,6 +50,15 @@ function App() {
     const reader = new FileReader()
     reader.onload = (e) => setImageSrc(e.target.result)
     reader.readAsDataURL(file)
+    // Record search query into history immediately
+    try {
+      addHistoryRecord({
+        type: 'image',
+        label: file.name || 'Image Upload Search',
+        summary: { totalObjects: 0, debrisCount: 0, highestSeverity: 'low', uniqueTypes: 0 },
+        location: 'Single Frame Search & Ingestion',
+      })
+    } catch {}
     setPage('dashboard')
   }, [])
 
@@ -42,7 +69,7 @@ function App() {
     try {
       const formData = new FormData()
       formData.append('file', selectedFile)
-      const response = await fetch('http://localhost:8000/detect', {
+      const response = await fetch(`${API_BASE_URL}/detect`, {
         method: 'POST',
         body: formData,
       })
@@ -52,7 +79,8 @@ function App() {
       // Annotated image (server draws bounding boxes)
       if (data.image) setAnnotatedSrc('data:image/jpeg;base64,' + data.image)
 
-      const rawDetections = data.detections || []
+      // Exclude ROV equipment from cleanup items
+      const rawDetections = (data.detections || []).filter((d) => d.class !== 'rov')
       const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1 }
       const items = rawDetections.map((d, idx) => ({
         name: d.class
@@ -87,15 +115,36 @@ function App() {
         debrisTypes: uniqueTypes,
         severity: highestSeverity,
       })
+
+      // Persist scan to history
+      try {
+        const thumb = data.image ? ('data:image/jpeg;base64,' + data.image) : imageSrc
+        const harmfulItems = items.filter((i) => i.severity && i.severity !== 'low')
+        addHistoryRecord({
+          type: 'image',
+          label: selectedFile.name || 'Single Image Scan',
+          summary: {
+            totalObjects: totalCount,
+            debrisCount: harmfulItems.length,
+            highestSeverity,
+            uniqueTypes,
+          },
+          thumbnailDataUrl: thumb,
+          inventory: harmfulItems.map((i) => ({ class: i.rawClass, count: 1 })),
+          location: 'Single Frame Ingestion',
+        })
+      } catch (logErr) {
+        console.warn('Failed to record scan to history:', logErr)
+      }
     } catch (err) {
       setErrorMessage(
         'Backend error: ' + err.message +
-        '. Make sure the FastAPI server is running on http://localhost:8000'
+        `. Make sure the FastAPI server is running on ${API_BASE_URL}`
       )
     } finally {
       setIsAnalyzing(false)
     }
-  }, [selectedFile])
+  }, [selectedFile, imageSrc])
 
   const handleClear = useCallback(() => {
     setImageSrc(null)
@@ -108,38 +157,85 @@ function App() {
     setPage('home')
   }, [])
 
-  // ── Route rendering ────────────────────────────────────────────────────
-  if (page === 'rov')       return <ROVSimulator onNavigate={setPage} />
-  if (page === 'optimizer') return <CleanupOptimizer onNavigate={setPage} />
-  if (page === 'about')     return <AboutPage onNavigate={setPage} />
-  if (page === 'home')      return <HomePage onFileSelect={handleFileSelect} onNavigate={setPage} />
+  const [cleanupTarget, setCleanupTarget] = useState(null)
 
-  // Dashboard (image detection)
+  const handleNavigate = useCallback((targetPage, targetData = null) => {
+    if (targetData) {
+      setCleanupTarget(targetData)
+    }
+    // If navigating to home but an active image scan exists, show the active dashboard
+    if (targetPage === 'home' && imageSrc) {
+      setPage('dashboard')
+    } else {
+      setPage(targetPage)
+    }
+  }, [imageSrc])
+
+  // ── Persistent Route Rendering ──────────────────────────────────────────
+  // All pages remain mounted in memory for the duration of the session.
+  // Switching between pages never destroys simulation state, maps, or scan results.
   return (
-    <>
-      <UploadPage
-        imageSrc={imageSrc}
-        annotatedSrc={annotatedSrc}
-        fileMeta={fileMeta}
-        isAnalyzing={isAnalyzing}
-        results={results}
-        errorMessage={errorMessage}
-        onAnalyze={handleAnalyze}
-        onClear={handleClear}
-        onFileSelect={handleFileSelect}
-        onFileReplace={handleFileSelect}
-        onOpenReport={() => setIsReportOpen(true)}
-        onDismissError={() => setErrorMessage(null)}
-        onNavigate={setPage}
-      />
-      <ReportPanel
-        results={results}
-        annotatedSrc={annotatedSrc}
-        isOpen={isReportOpen}
-        onClose={() => setIsReportOpen(false)}
-      />
-      <LoadingOverlay active={isAnalyzing} />
-    </>
+    <div className="app-container" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* 1. Home Landing Page */}
+      <div style={{ display: page === 'home' ? 'block' : 'none', width: '100%' }}>
+        <HomePage onFileSelect={handleFileSelect} onNavigate={handleNavigate} />
+      </div>
+
+      {/* 2. Single Image Scan Dashboard */}
+      <div style={{ display: page === 'dashboard' ? 'block' : 'none', width: '100%' }}>
+        <UploadPage
+          imageSrc={imageSrc}
+          annotatedSrc={annotatedSrc}
+          fileMeta={fileMeta}
+          isAnalyzing={isAnalyzing}
+          results={results}
+          errorMessage={errorMessage}
+          onAnalyze={handleAnalyze}
+          onClear={handleClear}
+          onFileSelect={handleFileSelect}
+          onFileReplace={handleFileSelect}
+          onOpenReport={() => setIsReportOpen(true)}
+          onDismissError={() => setErrorMessage(null)}
+          onNavigate={handleNavigate}
+        />
+        <ReportPanel
+          results={results}
+          annotatedSrc={annotatedSrc}
+          isOpen={isReportOpen}
+          onClose={() => setIsReportOpen(false)}
+        />
+        <LoadingOverlay active={isAnalyzing} />
+      </div>
+
+      {/* 3. ROV Edge Simulator */}
+      <div style={{ display: page === 'rov' ? 'block' : 'none', width: '100%' }}>
+        <ROVSimulator onNavigate={handleNavigate} />
+      </div>
+
+      {/* 4. Batch Stream Page */}
+      <div style={{ display: page === 'batch' ? 'block' : 'none', width: '100%' }}>
+        <BatchStreamPage onNavigate={handleNavigate} />
+      </div>
+
+      {/* 5. Cleanup Optimizer */}
+      <div style={{ display: page === 'optimizer' ? 'block' : 'none', width: '100%' }}>
+        <CleanupOptimizer
+          target={cleanupTarget}
+          onNavigate={handleNavigate}
+          onClearTarget={() => setCleanupTarget(null)}
+        />
+      </div>
+
+      {/* 6. Scan History */}
+      <div style={{ display: page === 'history' ? 'block' : 'none', width: '100%' }}>
+        <HistoryPage onNavigate={handleNavigate} />
+      </div>
+
+      {/* 7. About Page */}
+      <div style={{ display: page === 'about' ? 'block' : 'none', width: '100%' }}>
+        <AboutPage onNavigate={handleNavigate} />
+      </div>
+    </div>
   )
 }
 

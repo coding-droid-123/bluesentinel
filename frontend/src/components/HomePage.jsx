@@ -1,5 +1,5 @@
 import React, { useRef, useCallback } from 'react'
-import logo from '../assets/logo.png'
+import NavBar from './NavBar'
 
 export default function HomePage({ onFileSelect, onNavigate }) {
   const fileInputRef = useRef(null)
@@ -18,21 +18,7 @@ export default function HomePage({ onFileSelect, onNavigate }) {
 
   return (
     <div className="home-page">
-      {/* NAV */}
-      <nav className="home-nav">
-        <div className="home-nav-inner" style={{ justifyContent: 'space-between' }}>
-          <div className="home-logo">
-            <img src={logo} alt="Blue Sentinel" className="home-logo-img" />
-            <span className="home-logo-text">Blue Sentinel</span>
-          </div>
-          <div className="home-nav-links">
-            <button className="home-nav-link home-nav-link-active">Home</button>
-            <button className="home-nav-link" onClick={() => onNavigate('rov')}>ROV Simulator</button>
-            <button className="home-nav-link" onClick={() => onNavigate('optimizer')}>Optimizer</button>
-            <button className="home-nav-link" onClick={() => onNavigate('about')}>About</button>
-          </div>
-        </div>
-      </nav>
+      <NavBar page="home" onNavigate={onNavigate} />
 
       {/* HERO */}
       <section className="home-hero">
@@ -42,15 +28,52 @@ export default function HomePage({ onFileSelect, onNavigate }) {
             RT-DETRv4 &nbsp;&middot;&nbsp; 69.5% mAP &nbsp;&middot;&nbsp; Scale-Up v2
           </div>
           <h1 className="home-hero-title">
-            Detect what hides<br />
-            <em className="home-hero-italic">beneath the surface</em>
+            Autonomous Underwater Debris Defense<br />
+            <em className="home-hero-italic">and Ecological Decision Support</em>
           </h1>
           <p className="home-hero-desc">
-            Upload an underwater photograph for instant debris detection with bounding boxes
-            and confidence scores, or use the ROV Simulator to stream live video through
-            the backend with real-time alerts and pile ranking.
+            Stream live ROV video with real-time ONNX Runtime acceleration, Multi-Object Tracking (MOT)
+            eliminating duplicate debris counting, emergency wildlife entanglement alerts, and parametric
+            cleanup cost optimization.
           </p>
-          <div className="home-stats">
+
+          <div style={{ display: 'flex', gap: 12, marginTop: 22, flexWrap: 'wrap' }}>
+            <button
+              onClick={() => onNavigate('rov')}
+              style={{
+                background: 'linear-gradient(135deg, #10b981, #059669)',
+                border: 'none', color: '#fff', fontWeight: 700,
+                fontSize: 14, padding: '12px 24px', borderRadius: 10, cursor: 'pointer',
+                boxShadow: '0 4px 14px rgba(16,185,129,0.35)',
+              }}
+            >
+              🎥 Launch ROV Simulator &rarr;
+            </button>
+            <button
+              onClick={() => onNavigate('batch')}
+              style={{
+                background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                border: 'none', color: '#fff', fontWeight: 700,
+                fontSize: 14, padding: '12px 22px', borderRadius: 10, cursor: 'pointer',
+                boxShadow: '0 4px 14px rgba(37,99,235,0.35)',
+              }}
+            >
+              ⚡ Batch Stream &amp; Map &rarr;
+            </button>
+            <button
+              onClick={() => onNavigate('optimizer')}
+              style={{
+                background: 'rgba(255,255,255,0.15)',
+                border: '1px solid rgba(255,255,255,0.3)',
+                color: '#fff', fontWeight: 600,
+                fontSize: 14, padding: '12px 22px', borderRadius: 10, cursor: 'pointer',
+              }}
+            >
+              📊 Cleanup Optimizer &rarr;
+            </button>
+          </div>
+
+          <div className="home-stats" style={{ marginTop: 28 }}>
             <div className="home-stat">
               <span className="home-stat-value">7K+</span>
               <span className="home-stat-label">Training images</span>
@@ -75,29 +98,29 @@ export default function HomePage({ onFileSelect, onNavigate }) {
       <section style={{ background: '#ddeaf2', padding: '40px 32px 0' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
           <p className="home-how-label">CAPABILITIES</p>
-          <h2 className="home-how-title" style={{ marginBottom: 20 }}>What Blue Sentinel 2.0 can do</h2>
+          <h2 className="home-how-title" style={{ marginBottom: 20 }}>Blue Sentinel Core Workflows</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
             {[
               {
-                icon: '🎯',
-                title: 'Still Image Detection',
-                desc: 'Upload any underwater photo. RT-DETRv4 draws bounding boxes with class names and confidence scores, then generates a PDF audit report.',
-                btn: 'Analyze Image',
-                action: () => fileInputRef.current?.click(),
-                accent: '#1e8a5e',
-              },
-              {
                 icon: '🎥',
-                title: 'ROV Video Simulator',
-                desc: 'Upload a recorded video. Frames are sent to the live backend in real time. Ghost gear, entanglement, and pile alerts fire automatically.',
+                title: 'ROV Edge Video Simulator',
+                desc: 'Stream video directly into ONNX Runtime inference. Features Multi-Object Tracking (IoU matching) that eliminates duplicate counting across consecutive frames.',
                 btn: 'Open ROV Simulator',
                 action: () => onNavigate('rov'),
                 accent: '#0d3260',
               },
               {
+                icon: '🚨',
+                title: 'Severity & Triage Engine',
+                desc: 'Real-time detection of ghost gear, hazardous debris piles, and marine animal entanglement. Automatically captures emergency snapshots to the survey database.',
+                btn: 'Launch ROV Feed',
+                action: () => onNavigate('rov'),
+                accent: '#dc2626',
+              },
+              {
                 icon: '💡',
                 title: 'Cleanup Optimizer',
-                desc: 'Compare surveyed areas with cost and crew-hour ranges. Helps cleanup teams allocate limited budgets to the highest-impact sites first.',
+                desc: 'Compare surveyed areas with cost and crew-hour ranges. Generates and dispatches logistics plans to the mission database to guide cleanup vessel operations.',
                 btn: 'Open Optimizer',
                 action: () => onNavigate('optimizer'),
                 accent: '#0d4a2e',

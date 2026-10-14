@@ -125,11 +125,82 @@ Open **`http://localhost:5173`** in your browser.
 | Method | Endpoint | Description |
 |:---|:---|:---|
 | `POST` | `/detect` | Upload an underwater image (`multipart/form-data`); runs D-FINE inference, saves annotated JPG to `/uploads/`, records to PostgreSQL, and returns detections JSON + base64 image. |
+| `WS` | `/ws/batch` | High-performance WebSocket stream for real-time batch frame processing and live schematic hotspot aggregation. Protocol: JSON metadata header followed by binary image bytes. |
+| `POST` | `/cleanup/zones/rename` | Rename a survey transect zone (e.g. `vid_00001` to custom alias) and persist in `cleanup_zones` for the Cleanup Optimizer. |
+| `GET` | `/cleanup/zones` | Fetch surveyed marine zones and their active debris inventory. |
+| `POST` | `/cleanup/optimize` | Generate parametric diver hours, equipment, and cost estimates for a cleanup zone. |
+| `GET` | `/missions` | List past ROV survey missions and batch runs. |
 | `GET` | `/history` | Paginated list of past scans with metadata and total detection counts. |
 | `GET` | `/history/{batch_id}` | Detailed scan record with bounding boxes, confidence scores, and classes. |
 | `GET` | `/stats` | Aggregate metrics (total scans, total detections, class distribution). |
 | `GET` | `/uploads/{filename}` | Direct static file access to saved annotated images. |
 | `GET` | `/docs` | Interactive Swagger UI documentation. |
+
+---
+
+## ⚡ Real-Time Batch Processing & Schematic Hotspot Map
+
+### WebSocket Protocol (`/ws/batch`)
+1. **Client Header (Text/JSON)**:
+   ```json
+   {
+     "filename": "vid_00001_000123.jpg",
+     "conf": 0.4,
+     "gap_threshold": 10,
+     "window_size": 30
+   }
+   ```
+2. **Client Binary Payload**:
+   Raw image bytes (`ArrayBuffer`).
+3. **Server Response (JSON per frame)**:
+   ```json
+   {
+     "type": "frame",
+     "filename": "vid_00001_000123.jpg",
+     "zone": "vid_00001",
+     "frame": 123,
+     "tracks": [
+       {"trackId": 1, "class": "trash_net", "confidence": 0.88, "severity": "critical", "box": [120, 80, 310, 240]}
+     ],
+     "alerts": [
+       {"type": "GHOST GEAR", "severity": "critical", "message": "NET detected"}
+     ],
+     "hotspots": {
+       "vid_00001": {
+         "min_frame": 10,
+         "max_frame": 123,
+         "total_frames_processed": 45,
+         "hotspots": [
+           {
+             "window_index": 0,
+             "frame_start": 0,
+             "frame_end": 29,
+             "normalized_x": 0.15,
+             "score": 6.5,
+             "object_count": 3,
+             "dominant_class": "trash_net",
+             "classes": {"trash_net": 1, "trash_bottle": 2}
+           }
+         ]
+       }
+     }
+   }
+   ```
+4. **Client Finish Signal (Text/JSON)**:
+   ```json
+   { "type": "finish" }
+   ```
+   Server records survey mission, persists hotspots in `debris_hotspots`, updates `cleanup_zones` inventory, and replies with `{ "type": "done", "summary": {...} }`.
+
+### Schematic Map
+* **Transect Position**: Extracted using regex `(vid_\d+)_(\d+)`. No GPS/telemetry required.
+* **Unique Object Counting**: Multi-Object Tracking (IoU) deduplicates physical debris so an item seen across 40 frames counts exactly once per window.
+* **Hazard Scores**: Weighted sum using `CLASS_WEIGHT` (fishing nets $\times 3$, pipes $\times 2$, bottles $\times 1$).
+* **Bubble Colors**:
+  * Blue: Low threat ($< 5.0$)
+  * Amber: Moderate/High threat ($5.0 - 12.0$)
+  * Red: Critical hazard ($\ge 12.0$)
+
 
 ---
 

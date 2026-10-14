@@ -11,8 +11,8 @@ from faster_coco_eval import COCO, COCOeval_faster
 # Paths
 ROOT_DIR = Path(__file__).parent.resolve()
 ONNX_PATH = ROOT_DIR / "weights" / "best.onnx"
-VAL_JSON_PATH = Path(r"C:\Users\user\Desktop\dataset\instance_version\instances_val_trashcan.json")
-VAL_IMG_DIR = Path(r"C:\Users\user\Desktop\dataset\instance_version\val")
+VAL_JSON_PATH = Path(r"C:\Users\user\Desktop\blueSent-FE\instances_val_0idx_pretty.json")
+VAL_IMG_DIR = Path(r"C:\Users\user\Desktop\dataset\original_data\images")
 
 INFER_SIZE = 640
 SCORE_THRESH = 0.001  # Keep low for standard COCO mAP calculation (evaluates full precision-recall curve)
@@ -50,7 +50,7 @@ def evaluate_onnx():
         img_arr = np.array(img_resized, dtype=np.float32) / 255.0
         img_arr = np.transpose(img_arr, (2, 0, 1))  # (3, 640, 640)
         im_data = np.expand_dims(img_arr, axis=0)   # (1, 3, 640, 640)
-        orig_sizes = np.array([[h, w]], dtype=np.int64)
+        orig_sizes = np.array([[w, h]], dtype=np.int64)
 
         # Forward pass
         outputs = session.run(None, {"images": im_data, "orig_target_sizes": orig_sizes})
@@ -75,7 +75,7 @@ def evaluate_onnx():
 
             results.append({
                 "image_id": img_id,
-                "category_id": int(lbl) + 1,  # Model is 0-indexed (0..21); Dataset is 1-indexed (1..22)
+                "category_id": int(lbl),  # instances_val_0idx_pretty.json categories are 0-indexed (0..21)
                 "bbox": [round(float(x1), 2), round(float(y1), 2), round(box_w, 2), round(box_h, 2)],
                 "score": float(sc),
             })
