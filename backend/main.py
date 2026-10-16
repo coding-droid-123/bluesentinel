@@ -492,21 +492,20 @@ async def ws_batch(websocket: WebSocket):
                             name=f"Batch Survey {time.strftime('%Y-%m-%d %H:%M')}",
                             video_source="batch_stream",
                             duration_sec=round(elapsed, 1),
-                            total_frames=processed_count,
+                            zones=len(all_snapshots),
                             total_unique_objects=total_unique_objects,
                             fps=round(processed_count / elapsed, 1) if elapsed > 0 else 0.0,
-                            model_format=CURRENT_ENGINE_TYPE,
                             summary_by_class=summary_by_class,
                         )
                         session.add(mission)
 
                         # 2. Persist hotspots
                         for zone_name, z_info in all_snapshots.items():
-                            for h in z_info.get("hotspots", []):
+                            for h_idx, h in enumerate(z_info.get("hotspots", [])):
                                 session.add(DebrisHotspot(
                                     id=uuid.uuid4(),
                                     mission_id=mission_id,
-                                    frame_number=h["frame_start"],
+                                    zone=f"{zone_name}_w{h_idx}",
                                     debris_count=h["object_count"],
                                     weighted_score=h["score"],
                                     dominant_class=h.get("dominant_class"),
@@ -701,13 +700,11 @@ async def start_mission(
         mission_id = uuid.uuid4()
         name = payload.get("name") or f"ROV Survey {time.strftime('%Y-%m-%d %H:%M')}"
         video_source = payload.get("video_source", "recorded_stream")
-        model_format = payload.get("model_format", CURRENT_ENGINE_TYPE)
 
         mission = SurveyMission(
             id=mission_id,
             name=name,
             video_source=video_source,
-            model_format=model_format,
         )
         db.add(mission)
         await db.commit()
@@ -737,10 +734,9 @@ async def finish_mission(
         name = payload.get("name") or f"ROV Survey {time.strftime('%Y-%m-%d %H:%M')}"
         video_source = payload.get("video_source", "recorded_stream")
         duration_sec = float(payload.get("duration_sec", 0.0))
-        total_frames = int(payload.get("total_frames", 0))
+        zones = int(payload.get("zones", 0))
         total_unique_objects = int(payload.get("total_unique_objects", 0))
         fps = float(payload.get("fps", 0.0))
-        model_format = payload.get("model_format", CURRENT_ENGINE_TYPE)
         avg_latency_ms = float(payload.get("avg_latency_ms", 0.0))
         summary_by_class = payload.get("summary_by_class", {})
 
@@ -749,10 +745,9 @@ async def finish_mission(
             name=name,
             video_source=video_source,
             duration_sec=duration_sec,
-            total_frames=total_frames,
+            zones=zones,
             total_unique_objects=total_unique_objects,
             fps=fps,
-            model_format=model_format,
             avg_latency_ms=avg_latency_ms,
             summary_by_class=summary_by_class,
         )
@@ -760,7 +755,7 @@ async def finish_mission(
 
         # Save Top Debris Hotspots
         hotspots_data = payload.get("hotspots", [])
-        for hs in hotspots_data:
+        for idx, hs in enumerate(hotspots_data):
             hotspot_id = uuid.uuid4()
             snapshot_url = None
 
@@ -777,7 +772,7 @@ async def finish_mission(
             db.add(DebrisHotspot(
                 id=hotspot_id,
                 mission_id=mission_id,
-                frame_number=int(hs.get("frame_number", 0)),
+                zone=str(hs.get("zone", f"zone_{idx}")),
                 debris_count=int(hs.get("debris_count", 0)),
                 weighted_score=float(hs.get("weighted_score", 0.0)),
                 dominant_class=hs.get("dominant_class"),
@@ -869,11 +864,9 @@ async def log_incident(
     mission_id: Optional[str] = Form(None),
     incident_type: str = Form(...),  # ENTANGLEMENT, GHOST_GEAR, LARGE_PILE
     severity: str = Form("critical"),
-    frame_number: int = Form(...),
+    zone: str = Form(...),
     timestamp_sec: float = Form(0.0),
     description: str = Form(...),
-    animal_species: Optional[str] = Form(None),
-    gear_type: Optional[str] = Form(None),
     snapshot: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -911,7 +904,6 @@ async def log_incident(
                     id=m_uuid,
                     name=f"Survey {time.strftime('%Y-%m-%d')}",
                     video_source="live_feed",
-                    model_format=CURRENT_ENGINE_TYPE,
                 ))
 
         incident = MissionIncident(
@@ -919,11 +911,9 @@ async def log_incident(
             mission_id=m_uuid,
             incident_type=incident_type,
             severity=severity,
-            frame_number=frame_number,
+            zone=zone,
             timestamp_sec=timestamp_sec,
             snapshot_url=snapshot_url,
-            animal_species=animal_species,
-            gear_type=gear_type,
             description=description,
         )
         db.add(incident)

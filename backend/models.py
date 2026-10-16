@@ -93,10 +93,9 @@ class SurveyMission(Base):
     name = Column(String, nullable=False)
     video_source = Column(String, nullable=False)
     duration_sec = Column(Float, default=0.0)
-    total_frames = Column(Integer, default=0)
+    zones = Column(Integer, default=0)  # Number of 10-frame analysis windows
     total_unique_objects = Column(Integer, default=0)
     fps = Column(Float, nullable=True)
-    model_format = Column(String, default="ONNX")
     avg_latency_ms = Column(Float, nullable=True)
     summary_by_class = Column(JSONB, default=dict)  # {"trash_bottle": 14, "trash_net": 2}
     created_at = Column(
@@ -115,10 +114,9 @@ class SurveyMission(Base):
             "name": self.name,
             "video_source": self.video_source,
             "duration_sec": self.duration_sec,
-            "total_frames": self.total_frames,
+            "zones": self.zones,
             "total_unique_objects": self.total_unique_objects,
             "fps": self.fps,
-            "model_format": self.model_format,
             "avg_latency_ms": self.avg_latency_ms,
             "summary_by_class": self.summary_by_class or {},
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -137,11 +135,9 @@ class MissionIncident(Base):
     mission_id = Column(UUID(), ForeignKey("survey_missions.id", ondelete="CASCADE"), nullable=False)
     incident_type = Column(String, nullable=False)  # ENTANGLEMENT, GHOST_GEAR, LARGE_PILE
     severity = Column(String, nullable=False, default="critical")  # critical, high, medium
-    frame_number = Column(Integer, nullable=False)
+    zone = Column(String, nullable=False)  # 10-frame analysis window ID (e.g. "zone_3")
     timestamp_sec = Column(Float, nullable=True)
     snapshot_url = Column(String, nullable=True)  # Saved JPEG thumbnail of the event
-    animal_species = Column(String, nullable=True)  # e.g. animal_crab
-    gear_type = Column(String, nullable=True)  # e.g. trash_net
     description = Column(Text, nullable=False)
     created_at = Column(
         DateTime(timezone=True),
@@ -157,11 +153,9 @@ class MissionIncident(Base):
             "mission_id": str(self.mission_id),
             "incident_type": self.incident_type,
             "severity": self.severity,
-            "frame_number": self.frame_number,
+            "zone": self.zone,
             "timestamp_sec": self.timestamp_sec,
             "snapshot_url": self.snapshot_url,
-            "animal_species": self.animal_species,
-            "gear_type": self.gear_type,
             "description": self.description,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
@@ -174,7 +168,7 @@ class DebrisHotspot(Base):
 
     id = Column(UUID(), primary_key=True, default=uuid.uuid4)
     mission_id = Column(UUID(), ForeignKey("survey_missions.id", ondelete="CASCADE"), nullable=False)
-    frame_number = Column(Integer, nullable=False)
+    zone = Column(String, nullable=False)  # 10-frame analysis window ID (e.g. "zone_3")
     debris_count = Column(Integer, nullable=False)
     weighted_score = Column(Float, nullable=False)
     dominant_class = Column(String, nullable=True)
@@ -191,7 +185,7 @@ class DebrisHotspot(Base):
         return {
             "id": str(self.id),
             "mission_id": str(self.mission_id),
-            "frame_number": self.frame_number,
+            "zone": self.zone,
             "debris_count": self.debris_count,
             "weighted_score": self.weighted_score,
             "dominant_class": self.dominant_class,

@@ -5,7 +5,7 @@ import logo from '../assets/logo.png'
  * Global Navigation Bar Component for Blue Sentinel
  *
  * @param {Object} props
- * @param {string} props.page - Current active page identifier ('home', 'dashboard', 'rov', 'batch', 'optimizer', 'about')
+ * @param {string} props.page - Current active page identifier ('home', 'dashboard', 'rov', 'optimizer', 'history', 'about')
  * @param {Function} props.onNavigate - Navigation callback function
  * @param {Function} [props.onClear] - Optional reset/clear callback when clicking logo or Home
  */
@@ -56,15 +56,6 @@ export default function NavBar({ page = 'home', onNavigate, onClear }) {
             aria-current={page === 'rov' ? 'page' : undefined}
           >
             ROV Simulator
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={`home-nav-link ${page === 'batch' ? 'home-nav-link-active' : ''}`}
-            onClick={() => handleNav('batch')}
-            aria-current={page === 'batch' ? 'page' : undefined}
-          >
-            Batch Stream
           </button>
           <button
             type="button"

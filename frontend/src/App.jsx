@@ -6,7 +6,6 @@ import AboutPage from './components/AboutPage'
 import UploadPage from './components/UploadPage'
 import ROVSimulator from './components/ROVSimulator'
 import CleanupOptimizer from './components/CleanupOptimizer'
-import BatchStreamPage from './components/BatchStreamPage'
 import HistoryPage from './components/HistoryPage'
 import { addHistoryRecord } from './hooks/useHistory'
 import { API_BASE_URL } from './config'
@@ -14,10 +13,11 @@ import { API_BASE_URL } from './config'
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#ea580c']
 
 function App() {
-  // pages: 'home' | 'about' | 'dashboard' | 'rov' | 'optimizer' | 'batch' | 'history'
+  // pages: 'home' | 'about' | 'dashboard' | 'rov' | 'optimizer' | 'history'
   const [page, setPage] = useState(() => {
     try {
-      return sessionStorage.getItem('bluesentinel_session_page') || 'home'
+      const saved = sessionStorage.getItem('bluesentinel_session_page')
+      return saved === 'batch' ? 'home' : (saved || 'home')
     } catch {
       return 'home'
     }
@@ -212,12 +212,7 @@ function App() {
         <ROVSimulator onNavigate={handleNavigate} />
       </div>
 
-      {/* 4. Batch Stream Page */}
-      <div style={{ display: page === 'batch' ? 'block' : 'none', width: '100%' }}>
-        <BatchStreamPage onNavigate={handleNavigate} />
-      </div>
-
-      {/* 5. Cleanup Optimizer */}
+      {/* 4. Cleanup Optimizer */}
       <div style={{ display: page === 'optimizer' ? 'block' : 'none', width: '100%' }}>
         <CleanupOptimizer
           target={cleanupTarget}

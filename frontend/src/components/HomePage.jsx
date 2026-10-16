@@ -25,16 +25,16 @@ export default function HomePage({ onFileSelect, onNavigate }) {
         <div className="home-hero-inner">
           <div className="home-badge">
             <span className="home-badge-dot" />
-            RT-DETRv4 &nbsp;&middot;&nbsp; 69.5% mAP &nbsp;&middot;&nbsp; Scale-Up v2
+            Lightweight-RTDETRv4 &nbsp;&middot;&nbsp; 68.6% mAP
           </div>
           <h1 className="home-hero-title">
             Autonomous Underwater Debris Defense<br />
             <em className="home-hero-italic">and Ecological Decision Support</em>
           </h1>
           <p className="home-hero-desc">
-            Stream live ROV video with real-time ONNX Runtime acceleration, Multi-Object Tracking (MOT)
-            eliminating duplicate debris counting, emergency wildlife entanglement alerts, and parametric
-            cleanup cost optimization.
+            Stream live ROV footage with real-time ONNX/TensorRT Runtime acceleration, Multi-Object Tracking (MOT)
+            eliminating duplicate debris counting, possible wildlife entanglement alerts, and cleanup cost
+            estimation.
           </p>
 
           <div style={{ display: 'flex', gap: 12, marginTop: 22, flexWrap: 'wrap' }}>
@@ -49,17 +49,7 @@ export default function HomePage({ onFileSelect, onNavigate }) {
             >
               🎥 Launch ROV Simulator &rarr;
             </button>
-            <button
-              onClick={() => onNavigate('batch')}
-              style={{
-                background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
-                border: 'none', color: '#fff', fontWeight: 700,
-                fontSize: 14, padding: '12px 22px', borderRadius: 10, cursor: 'pointer',
-                boxShadow: '0 4px 14px rgba(37,99,235,0.35)',
-              }}
-            >
-              ⚡ Batch Stream &amp; Map &rarr;
-            </button>
+
             <button
               onClick={() => onNavigate('optimizer')}
               style={{
@@ -69,13 +59,13 @@ export default function HomePage({ onFileSelect, onNavigate }) {
                 fontSize: 14, padding: '12px 22px', borderRadius: 10, cursor: 'pointer',
               }}
             >
-              📊 Cleanup Optimizer &rarr;
+              📊 Cleanup Estimator &rarr;
             </button>
           </div>
 
           <div className="home-stats" style={{ marginTop: 28 }}>
             <div className="home-stat">
-              <span className="home-stat-value">7K+</span>
+              <span className="home-stat-value">6K+</span>
               <span className="home-stat-label">Training images</span>
             </div>
             <div className="home-stat">
@@ -83,12 +73,8 @@ export default function HomePage({ onFileSelect, onNavigate }) {
               <span className="home-stat-label">Debris categories</span>
             </div>
             <div className="home-stat">
-              <span className="home-stat-value">69.5%</span>
+              <span className="home-stat-value">68.6%</span>
               <span className="home-stat-label">Detection mAP</span>
-            </div>
-            <div className="home-stat">
-              <span className="home-stat-value">3</span>
-              <span className="home-stat-label">Alert trigger types</span>
             </div>
           </div>
         </div>
@@ -104,24 +90,16 @@ export default function HomePage({ onFileSelect, onNavigate }) {
               {
                 icon: '🎥',
                 title: 'ROV Edge Video Simulator',
-                desc: 'Stream video directly into ONNX Runtime inference. Features Multi-Object Tracking (IoU matching) that eliminates duplicate counting across consecutive frames.',
+                desc: 'Stream footage directly into ONNX/TensorRT Runtime inference. Features Multi-Object Tracking that eliminates duplicate counting across consecutive frames.',
                 btn: 'Open ROV Simulator',
                 action: () => onNavigate('rov'),
                 accent: '#0d3260',
               },
               {
-                icon: '🚨',
-                title: 'Severity & Triage Engine',
-                desc: 'Real-time detection of ghost gear, hazardous debris piles, and marine animal entanglement. Automatically captures emergency snapshots to the survey database.',
-                btn: 'Launch ROV Feed',
-                action: () => onNavigate('rov'),
-                accent: '#dc2626',
-              },
-              {
                 icon: '💡',
-                title: 'Cleanup Optimizer',
+                title: 'Cleanup Estimator',
                 desc: 'Compare surveyed areas with cost and crew-hour ranges. Generates and dispatches logistics plans to the mission database to guide cleanup vessel operations.',
-                btn: 'Open Optimizer',
+                btn: 'Open Cleanup Estimator',
                 action: () => onNavigate('optimizer'),
                 accent: '#0d4a2e',
               },
@@ -148,34 +126,6 @@ export default function HomePage({ onFileSelect, onNavigate }) {
         </div>
       </section>
 
-      {/* UPLOAD ZONE */}
-      <section className="home-upload-section">
-        <div className="home-upload-inner">
-          <div
-            className="home-dropzone"
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <div className="home-dropzone-icon">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="17 8 12 3 7 8" />
-                <line x1="12" y1="3" x2="12" y2="15" />
-              </svg>
-            </div>
-            <p className="home-dropzone-title">Drop your underwater photo here</p>
-            <p className="home-dropzone-sub">or click to browse &mdash; JPG, PNG, WebP up to 25 MB</p>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            style={{ display: 'none' }}
-            onChange={handleInputChange}
-          />
-        </div>
-      </section>
 
       {/* HOW IT WORKS */}
       <section className="home-how-section">
@@ -184,9 +134,9 @@ export default function HomePage({ onFileSelect, onNavigate }) {
           <h2 className="home-how-title">How Blue Sentinel works</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14 }}>
             {[
-              { num: '01', title: 'Upload', desc: 'Submit a still image or video from ROVs, dive cameras, or research vessels.' },
+              { num: '01', title: 'Upload', desc: 'Submit a footage from ROVs, dive cameras, or research vessels.' },
               { num: '02', title: 'Detect', desc: 'RT-DETRv4 runs inference. Bounding boxes are drawn with class name and confidence score.' },
-              { num: '03', title: 'Alert & Rank', desc: 'Ghost gear, entanglement, and large piles fire alerts. Piles are ranked by weighted hazard score.' },
+              { num: '03', title: 'Alert & Rank', desc: 'Ghost gear,possible entanglement, and large piles fire alerts. Piles are ranked by weighted hazard score.' },
               { num: '04', title: 'Plan', desc: 'The Optimizer estimates crew hours and costs to help prioritize cleanup resources.' },
             ].map((card) => (
               <div key={card.num} className="home-card">
@@ -208,7 +158,7 @@ export default function HomePage({ onFileSelect, onNavigate }) {
             {[
               { color: '#ef4444', bg: '#fef2f2', border: '#fecaca', type: 'GHOST GEAR', title: 'Abandoned Fishing Gear', desc: 'Nets, ropes, and tarps detected in isolation. Fires after persisting across multiple frames.' },
               { color: '#f97316', bg: '#fff7ed', border: '#fed7aa', type: 'ENTANGLEMENT', title: 'Animal Near Ghost Gear', desc: 'Fish, crabs, eels, or starfish co-located with nets or ropes. Approximated from bbox proximity.' },
-              { color: '#eab308', bg: '#fefce8', border: '#fef08a', type: 'LARGE PILE', title: 'High Debris Density', desc: '5+ objects in a single frame. Single items (bottle, cloth) are logged but never alert.' },
+              { color: '#eab308', bg: '#fefce8', border: '#fef08a', type: 'LARGE PILE', title: 'High Debris Density', desc: 'objects per location. Single items (bottle, cloth) are logged but never alert.' },
             ].map((a) => (
               <div key={a.type} style={{ background: a.bg, border: `1px solid ${a.border}`, borderTop: `3px solid ${a.color}`, borderRadius: 14, padding: '20px' }}>
                 <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '0.08em', color: a.color, display: 'block', marginBottom: 8 }}>ALERT: {a.type}</span>
@@ -221,8 +171,8 @@ export default function HomePage({ onFileSelect, onNavigate }) {
       </section>
 
       <footer className="home-footer">
-        <p className="home-footer-title">Blue Sentinel 2.0 &mdash; Marine Debris Detection &amp; Ecological Audit System</p>
-        <p className="home-footer-sub">RT-DETRv4 &middot; D-FINE HGNetV2-L &middot; TrashCan Dataset &middot; J-EDI &middot; JAMSTEC DARWIN</p>
+        <p className="home-footer-title">Blue Sentinel &mdash; Marine Debris Detection &amp; Ecological Audit System</p>
+        <p className="home-footer-sub">RT-DETRv4 &middot; HGNetV2-L &middot; TrashCan Dataset &middot; J-EDI &middot; JAMSTEC DARWIN</p>
       </footer>
     </div>
   )

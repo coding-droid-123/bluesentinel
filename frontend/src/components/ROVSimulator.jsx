@@ -284,11 +284,10 @@ export default function ROVSimulator({ onNavigate }) {
                 if (missionIdRef.current) incFd.append('mission_id', missionIdRef.current)
                 incFd.append('incident_type', alt.type)
                 incFd.append('severity', alt.severity)
-                incFd.append('frame_number', fNum)
+                const currentZoneIdx = Math.floor(fNum / (hotspotWindowSize || 10))
+                incFd.append('zone', `zone_${currentZoneIdx + 1}`)
                 incFd.append('timestamp_sec', videoRef.current?.currentTime || 0)
                 incFd.append('description', alt.message)
-                if (alt.animal) incFd.append('animal_species', alt.animal)
-                if (alt.gear) incFd.append('gear_type', alt.gear)
                 if (blob) incFd.append('snapshot', blob, `incident_f${fNum}.jpg`)
 
                 fetch(`${API_BASE_URL}/incidents`, {
@@ -434,16 +433,15 @@ export default function ROVSimulator({ onNavigate }) {
         name: videoFile ? `ROV Survey - ${videoFile.name}` : `ROV Survey ${new Date().toLocaleTimeString()}`,
         video_source: videoFile ? videoFile.name : 'rov_stream',
         duration_sec: parseFloat(elapsedSec.toFixed(1)),
-        total_frames: frameNumRef.current,
+        zones: Math.max(1, Math.ceil(frameNumRef.current / (hotspotWindowSize || 10))),
         total_unique_objects: uniqueCountRef.current,
         fps: currentFps,
-        model_format: modelFormat,
         avg_latency_ms: latency || 0,
         summary_by_class: classTallyRef.current,
         hotspots: Object.entries(hotspotWindowsRef.current)
           .filter(([, w]) => w.uniqueObjects.size > 0)
           .map(([wIdx, w]) => ({
-            frame_number: w.frameStart,
+            zone: `zone_${Number(wIdx) + 1}`,
             debris_count: w.uniqueObjects.size,
             weighted_score: w.hasHazard ? 10 : 2,
             dominant_class: Object.keys(w.classesCount)[0] || 'trash_debris',
@@ -612,7 +610,6 @@ export default function ROVSimulator({ onNavigate }) {
       body: JSON.stringify({
         name: videoFile ? `ROV Survey - ${videoFile.name}` : `ROV Survey ${new Date().toLocaleTimeString()}`,
         video_source: videoFile ? videoFile.name : 'rov_stream',
-        model_format: modelFormat,
       }),
     })
       .then((res) => res.ok ? res.json() : null)
