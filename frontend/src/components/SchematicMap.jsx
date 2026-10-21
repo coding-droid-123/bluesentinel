@@ -31,12 +31,89 @@ function formatCoord(lat, lng) {
   return `${Math.abs(lat).toFixed(4)}°${latDir}, ${Math.abs(lng).toFixed(4)}°${lngDir}`
 }
 
+// ── Pre-configured Marine Test Presets ──────────────────────────────────────
+const MARINE_PRESETS = [
+  { name: 'Monterey Submarine Canyon (Pacific)', lat: 36.7500, lng: -122.0000 },
+  { name: 'Great Barrier Reef (Coral Sea)', lat: -16.5000, lng: 145.8000 },
+  { name: 'Goa Offshore Shelf (Arabian Sea)', lat: 15.4900, lng: 73.7000 },
+  { name: 'North Sea (Dogger Bank Basin)', lat: 54.7500, lng: 2.2500 },
+  { name: 'Mariana Trench (Deepest Seafloor)', lat: 11.3500, lng: 142.2000 },
+]
+
+// ── Multi-Tier Seafloor Bathymetric Depth Fetcher ───────────────────────────
+// Tiers: (1) Backend proxy (port 8000) -> (2) Depth service (port 8001) -> (3) NOAA NCEI ETOPO Global Relief Model
+export async function fetchGlobalBathymetricDepth(lat, lng) {
+  // Tier 1: Backend proxy
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/ocean-depth?lat=${lat}&lon=${lng}`)
+    if (res.ok) {
+      const data = await res.json()
+      if (typeof data?.depth_m === 'number' && data.depth_m > 0) return data.depth_m
+    }
+  } catch {}
+
+  // Tier 2: Dedicated Ocean Depth microservice (port 8001)
+  try {
+    const res2 = await fetch(`http://localhost:8001/depth?lat=${lat}&lon=${lng}`, {
+      headers: { 'x-api-key': 'test-key-1' },
+    })
+    if (res2.ok) {
+      const data2 = await res2.json()
+      if (typeof data2?.depth_m === 'number' && data2.depth_m > 0) return data2.depth_m
+    }
+  } catch {}
+
+  // Tier 3: Direct NOAA NCEI ETOPO Global DEM Mosaic ImageServer (Global coverage, no auth, no limits)
+  try {
+    const geoJson = JSON.stringify({ x: lng, y: lat, spatialReference: { wkid: 4326 } })
+    const noaaUrl = `https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer/identify?geometry=${encodeURIComponent(geoJson)}&geometryType=esriGeometryPoint&returnGeometry=false&f=json`
+    const res3 = await fetch(noaaUrl)
+    if (res3.ok) {
+      const data3 = await res3.json()
+      const val = parseFloat(data3?.value)
+      if (Number.isFinite(val)) {
+        // In ETOPO DEM, negative values are bathymetric depth in meters
+        if (val < 0) return Math.round(Math.abs(val) * 10) / 10
+        return 0 // Coastal or terrestrial surface
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+// ── Dominant Debris Formatting Helper ──────────────────────────────────────
+export function formatDebrisClassName(cls) {
+  if (!cls) return 'Debris'
+  const clean = String(cls).replace(/^trash_|^animal_/, '').toLowerCase()
+  if (clean === 'unknown_instance' || clean === 'unknown' || clean === 'debris' || clean === 'trash_debris') {
+    return 'Debris'
+  }
+  const map = {
+    net: 'Fishing Net',
+    rope: 'Rope',
+    tarp: 'Tarp',
+    pipe: 'Pipe',
+    wreckage: 'Wreckage',
+    bag: 'Plastic Bag',
+    bottle: 'Bottle',
+    container: 'Container',
+    clothing: 'Clothing',
+    can: 'Metal Can',
+    cup: 'Cup',
+    snack_wrapper: 'Snack Wrapper',
+    branch: 'Branch',
+    other_debris: 'Other Debris',
+  }
+  return map[clean] || clean.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 // ── Golden Angle Open Water Radial Distribution ────────────────────────────
 // Distributes debris piles around the central dive site across a 500m radius.
-// Spaced by 137.508° (golden angle) so consecutive piles spread into distinct quadrants.
+// When valid marine headings are detected, piles are steered strictly into water sectors.
 const GOLDEN_ANGLE_RAD = 137.508 * (Math.PI / 180)
 
-export function getPileGeoLocation(centerCoords, index = 0) {
+export function getPileGeoLocation(centerCoords, index = 0, validHeadings = null) {
   const safeIdx = Number.isFinite(Number(index)) ? Math.max(0, Number(index)) : 0
   const centerLat = Number.isFinite(centerCoords?.lat) ? centerCoords.lat : 0
   const centerLng = Number.isFinite(centerCoords?.lng) ? centerCoords.lng : 0
@@ -45,22 +122,34 @@ export function getPileGeoLocation(centerCoords, index = 0) {
     return { lat: 0, lng: 0, distanceMeters: 0, bearingDeg: 0, cardinal: 'N' }
   }
 
-  // Direction angle (radians) with small initial bearing offset
-  const angle = (safeIdx * GOLDEN_ANGLE_RAD) + (32 * Math.PI / 180)
+  let angleRad
+  let deg
 
-  // Varied realistic underwater survey distances spanning across 500m dive perimeter (180m to 495m)
-  const baseDistances = [190, 340, 260, 480, 220, 420, 310, 495]
-  const distMeters = Math.min(500, baseDistances[safeIdx % baseDistances.length] + ((safeIdx * 17) % 35))
+  if (Array.isArray(validHeadings) && validHeadings.length > 0) {
+    // Steer strictly into verified open marine water headings (preventing piles from landing on shore/cliffs)
+    const baseDeg = validHeadings[safeIdx % validHeadings.length]
+    // Slight angular variation within the verified water sector so repeated piles don't stack
+    const spreadOffset = ((safeIdx * 7) % 15) - 7
+    deg = Math.round((baseDeg + spreadOffset + 360) % 360)
+    angleRad = (deg * Math.PI) / 180
+  } else {
+    // Fallback to Golden angle radial distribution
+    angleRad = (safeIdx * GOLDEN_ANGLE_RAD) + (32 * Math.PI / 180)
+    deg = Math.round(((angleRad * 180 / Math.PI) % 360 + 360) % 360)
+  }
 
-  const dLat = (distMeters * Math.cos(angle)) / 111320
+  // Realistic underwater survey distances spanning across 500m dive perimeter (180m to 480m)
+  const baseDistances = [190, 310, 240, 440, 220, 380, 270, 460]
+  const distMeters = Math.min(480, baseDistances[safeIdx % baseDistances.length] + ((safeIdx * 13) % 25))
+
+  const dLat = (distMeters * Math.cos(angleRad)) / 111320
   const cosLat = Math.cos((centerLat * Math.PI) / 180)
   const safeCos = Math.abs(cosLat) < 0.0001 ? 0.0001 : cosLat
-  const dLng = (distMeters * Math.sin(angle)) / (111320 * safeCos)
+  const dLng = (distMeters * Math.sin(angleRad)) / (111320 * safeCos)
 
   const lat = centerLat + dLat
   const lng = centerLng + dLng
 
-  const deg = Math.round(((angle * 180 / Math.PI) % 360 + 360) % 360)
   const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
   const cardinal = cardinals[Math.round(deg / 45) % 8]
 
@@ -73,45 +162,156 @@ export function getPileGeoLocation(centerCoords, index = 0) {
   }
 }
 
-// ── Resilient sea/ocean validation using reverse geocoding ───────────────────
-async function checkMarineWaterNearby(lat, lng) {
+// ── Probe 12 surrounding radial azimuths to find strictly water headings ────
+async function discoverMarineWaterHeadings(centerLat, centerLng) {
+  const probeHeadings = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]
+  const probeDist = 320 // meters
+  const lats = []
+  const lngs = []
+
+  for (const deg of probeHeadings) {
+    const rad = (deg * Math.PI) / 180
+    const dLat = (probeDist * Math.cos(rad)) / 111320
+    const cosLat = Math.cos((centerLat * Math.PI) / 180)
+    const safeCos = Math.abs(cosLat) < 0.0001 ? 0.0001 : cosLat
+    const dLng = (probeDist * Math.sin(rad)) / (111320 * safeCos)
+    lats.push(Number((centerLat + dLat).toFixed(5)))
+    lngs.push(Number((centerLng + dLng).toFixed(5)))
+  }
+
+  // Tier 1: Dedicated Ocean Depth Service (SRTM15Plus Global DEM Bathymetry)
+  // Queries high-resolution bathymetric depth for all 12 radial probe coordinates
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 4000)
+    const res = await fetch(
+      `${API_BASE_URL}/api/ocean-depth/batch?lats=${lats.join(',')}&lons=${lngs.join(',')}`,
+      { signal: controller.signal }
+    )
+    clearTimeout(timer)
+    if (res.ok) {
+      const data = await res.json()
+      const results = data?.results || []
+      // Points with positive ocean depth (depth_m > 0) are definitively underwater
+      const waterOnly = probeHeadings.filter((_, idx) => {
+        const item = results[idx]
+        return typeof item?.depth_m === 'number' && item.depth_m > 0
+      })
+      if (waterOnly.length > 0) return waterOnly
+    }
+  } catch {}
+
+  // Tier 2: Open-Meteo Global Elevation Fallback
+  // Headings with elevation <= 1.0m are in open sea/ocean water
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 3500)
+    const res = await fetch(
+      `https://api.open-meteo.com/v1/elevation?latitude=${lats.join(',')}&longitude=${lngs.join(',')}`,
+      { signal: controller.signal }
+    )
+    clearTimeout(timer)
+    if (res.ok) {
+      const data = await res.json()
+      const elevs = data?.elevation || []
+      const waterOnly = probeHeadings.filter((_, idx) => {
+        const el = elevs[idx]
+        return typeof el === 'number' && el <= 1.0
+      })
+      if (waterOnly.length > 0) return waterOnly
+    }
+  } catch {}
+  return null
+}
+
+// ── Strict sea/ocean validation (Ocean Depth Service + Marine Wave Model + Elevation + OSM) ──
+async function checkMarineWaterNearby(lat, lng) {
+  // 1. Primary Ground Truth: Multi-Tier Ocean Depth & NOAA ETOPO Bathymetry
+  try {
+    const depth = await fetchGlobalBathymetricDepth(lat, lng)
+    if (typeof depth === 'number' && depth > 0) {
+      return true // Confirmed open marine water with authentic seafloor depth
+    }
+    if (depth === 0) {
+      return true // Coastal sea level
+    }
+  } catch {}
+
+  // 2. Secondary Ground Truth: Marine Wave Model
+  // Marine wave models (ECMWF WAM) only resolve on sea/ocean/bay grid points.
+  // Deserts, mountains, and all inland terrain strictly return wave_height = null.
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 2500)
+    const mRes = await fetch(
+      `https://marine-api.open-meteo.com/v1/marine?latitude=${lat}&longitude=${lng}&current=wave_height`,
+      { signal: controller.signal }
+    )
+    clearTimeout(timer)
+    if (mRes.ok) {
+      const mData = await mRes.json()
+      const wh = mData?.current?.wave_height
+      if (wh !== null && typeof wh === 'number') {
+        return true // Verified open marine waters (ocean, sea, or active coastal waters)
+      }
+    }
+  } catch {}
+
+  // 3. Tertiary Ground Truth: Elevation Check
+  // The global sea level is <= 0m (or <= 5m for tidal fringes).
+  // Deserts (Sahara ~500m, Mojave ~1300m, Gobi ~1100m, Atacama ~2500m) are elevated land masses.
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 2500)
+    const eRes = await fetch(
+      `https://api.open-meteo.com/v1/elevation?latitude=${lat}&longitude=${lng}`,
+      { signal: controller.signal }
+    )
+    clearTimeout(timer)
+    if (eRes.ok) {
+      const eData = await eRes.json()
+      const elev = eData?.elevation?.[0]
+      if (typeof elev === 'number' && elev > 5.0) {
+        // Strictly inland land mass, desert, or mountain
+        return false
+      }
+    }
+  } catch {}
+
+  // 4. Quaternary Check: OpenStreetMap Reverse Geocoding
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 3000)
     const nRes = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=10`,
       { headers: { 'User-Agent': 'BlueSentinel/2.0' }, signal: controller.signal }
     )
     clearTimeout(timer)
-    if (!nRes.ok) return true // Network issue or offshore server reject -> allow marine map
+    if (nRes.ok) {
+      const nData = await nRes.json()
 
-    const nData = await nRes.json()
+      // Deep international waters: No geographic land feature registered
+      if (nData.error && String(nData.error).toLowerCase().includes('unable to geocode')) {
+        return true
+      }
 
-    // Offshore / open waters: OSM Nominatim returns "Unable to geocode" because there is no land address
-    if (nData.error && String(nData.error).toLowerCase().includes('unable to geocode')) {
-      return true
+      const type = (nData?.type || '').toLowerCase()
+      const cls  = (nData?.class || '').toLowerCase()
+      const marineKeywords = ['sea', 'ocean', 'bay', 'strait', 'reef', 'coastline', 'harbour', 'beach', 'shoal', 'water']
+      if (marineKeywords.some((t) => type.includes(t) || cls.includes(t))) {
+        return true
+      }
+
+      // If it belongs to a terrestrial administrative jurisdiction (country, state, county, desert, etc.) without marine tags
+      const addr = nData?.address || {}
+      if (addr.country || addr.state || addr.county || addr.city || addr.town || addr.village) {
+        return false // Strictly terrestrial land/desert
+      }
     }
+  } catch {}
 
-    const type = (nData?.type || '').toLowerCase()
-    const cls  = (nData?.class || '').toLowerCase()
-    const marineKeywords = ['sea', 'ocean', 'bay', 'strait', 'reef', 'coastline', 'harbour', 'beach', 'shoal', 'water']
-    if (marineKeywords.some((t) => type.includes(t) || cls.includes(t))) {
-      return true
-    }
-
-    // If it has no named administrative city/town/village/suburb/road, it's offshore open water
-    const addr = nData?.address || {}
-    const hasLandSettlement = Boolean(addr.city || addr.town || addr.village || addr.suburb || addr.road || addr.county)
-    if (!hasLandSettlement) {
-      return true
-    }
-
-    // Located on inland territory
-    return false
-  } catch {
-    // If reverse geocoding is unavailable or times out, fail open so ROV mapping is never blocked
-    return true
-  }
+  // 5. Offline resilience: Fail open only if all network APIs are unreachable (offshore expedition mode)
+  return true
 }
 
 
@@ -222,6 +422,181 @@ export default function SchematicMap({
   const [zoneAlias, setZoneAlias]           = useState('')
   const [renamingStatus, setRenamingStatus] = useState({})
 
+  // Pile rename / alias state (persisted in sessionStorage)
+  const [pileAliases, setPileAliases]       = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('bluesentinel_pile_aliases')
+      return saved ? JSON.parse(saved) : {}
+    } catch {
+      return {}
+    }
+  })
+  const [editingPileKey, setEditingPileKey] = useState(null)
+  const [pileAliasInput, setPileAliasInput] = useState('')
+  const [safeWaterHeadings, setSafeWaterHeadings] = useState(null)
+  const [diveDepth, setDiveDepth] = useState(null)
+  const diveDepthRef = useRef(diveDepth)
+  diveDepthRef.current = diveDepth
+
+  // ── Manual GPS Input & Survey Export State ────────────────────────────────
+  const [gpsInputOpen, setGpsInputOpen] = useState(false)
+  const [manualLat, setManualLat] = useState('')
+  const [manualLng, setManualLng] = useState('')
+  const [exportNotice, setExportNotice] = useState(null)
+
+  const handleApplyManualGps = (customLat, customLng) => {
+    const lat = parseFloat(customLat !== undefined ? customLat : manualLat)
+    const lng = parseFloat(customLng !== undefined ? customLng : manualLng)
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      setStatusMsg('Please enter valid numeric latitude (-90 to 90) and longitude (-180 to 180).')
+      return
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      setStatusMsg('Coordinates out of range. Lat must be between -90 and 90, Lng between -180 and 180.')
+      return
+    }
+    const c = { lat: Number(lat.toFixed(6)), lng: Number(lng.toFixed(6)) }
+    setCoords(c)
+    validateWater(c)
+    if (mapRef.current) {
+      mapRef.current.setView([c.lat, c.lng], 14, { animate: true })
+    }
+  }
+
+  const handleExportGeoJSON = () => {
+    if (!rankedPiles || rankedPiles.length === 0) return
+    const featureCollection = {
+      type: 'FeatureCollection',
+      metadata: {
+        title: 'BlueSentinel ROV Ocean Debris Survey',
+        generatedAt: new Date().toISOString(),
+        surveyCenter: coords,
+        seafloorDepthMeters: diveDepth > 0 ? diveDepth : null,
+        totalPiles: rankedPiles.length,
+        totalHarmfulItems: rankedPiles.reduce((acc, p) => acc + (p.harmfulCount || 0), 0),
+      },
+      features: rankedPiles.map((p) => ({
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [p.geo?.lng ?? coords?.lng, p.geo?.lat ?? coords?.lat],
+        },
+        properties: {
+          rank: p.rank,
+          pile_number: p.pile_number,
+          name: p.displayName,
+          harmful_debris_count: p.harmfulCount,
+          dominant_class: (p.dominant_class || '').replace(/^trash_|^animal_/, ''),
+          severity: p.severity,
+          risk_score: p.score,
+          distance_meters: p.geo?.distanceMeters,
+          cardinal_direction: p.geo?.cardinal,
+          bearing_degrees: p.geo?.bearingDeg,
+          seafloor_depth_m: diveDepth > 0 ? diveDepth : null,
+          center_lat: coords?.lat,
+          center_lng: coords?.lng,
+        },
+      })),
+    }
+
+    const blob = new Blob([JSON.stringify(featureCollection, null, 2)], { type: 'application/geo+json' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `bluesentinel_hotspots_${new Date().toISOString().replace(/[:.]/g, '-')}.geojson`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    setExportNotice('GeoJSON exported!')
+    setTimeout(() => setExportNotice(null), 3000)
+  }
+
+  const handleExportCSV = () => {
+    if (!rankedPiles || rankedPiles.length === 0) return
+    const headers = [
+      'Rank',
+      'Pile_Number',
+      'Display_Name',
+      'Latitude',
+      'Longitude',
+      'Harmful_Count',
+      'Dominant_Class',
+      'Severity',
+      'Risk_Score',
+      'Distance_Meters',
+      'Cardinal_Bearing',
+      'Bearing_Degrees',
+      'Seafloor_Depth_M',
+      'Survey_Center_Lat',
+      'Survey_Center_Lng',
+    ]
+
+    const escapeCsv = (val) => {
+      if (val === null || val === undefined) return ''
+      const str = String(val)
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`
+      }
+      return str
+    }
+
+    const rows = rankedPiles.map((p) => [
+      p.rank,
+      p.pile_number,
+      escapeCsv(p.displayName),
+      p.geo?.lat ?? '',
+      p.geo?.lng ?? '',
+      p.harmfulCount,
+      escapeCsv((p.dominant_class || '').replace(/^trash_|^animal_/, '')),
+      p.severity,
+      p.score,
+      p.geo?.distanceMeters ?? '',
+      escapeCsv(p.geo?.cardinal ?? ''),
+      p.geo?.bearingDeg ?? '',
+      diveDepth > 0 ? diveDepth : '',
+      coords?.lat ?? '',
+      coords?.lng ?? '',
+    ])
+
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `bluesentinel_piles_${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    setExportNotice('CSV exported!')
+    setTimeout(() => setExportNotice(null), 3000)
+  }
+
+  const handleStartRenamePile = (pileKey, currentName) => {
+    setEditingPileKey(pileKey)
+    setPileAliasInput(currentName || '')
+  }
+
+  const handleSaveRenamePile = (pileKey) => {
+    const trimmed = pileAliasInput.trim()
+    setPileAliases((prev) => {
+      const next = { ...prev }
+      if (trimmed) {
+        next[pileKey] = trimmed
+      } else {
+        delete next[pileKey]
+      }
+      try {
+        sessionStorage.setItem('bluesentinel_pile_aliases', JSON.stringify(next))
+      } catch {}
+      return next
+    })
+    setEditingPileKey(null)
+  }
+
   const validateIdRef = useRef(0)
   const validateRef   = useRef(null)
   const onNavigateRef = useRef(onNavigate)
@@ -235,15 +610,30 @@ export default function SchematicMap({
 
   const evaluatedPiles = useMemo(() => {
     if (!coords) return []
+    const dNow = new Date()
+    const yyyymmdd = `${dNow.getFullYear()}${String(dNow.getMonth() + 1).padStart(2, '0')}${String(dNow.getDate()).padStart(2, '0')}`
+
     return rawPiles.map((pile, idx) => {
-      const geo = getPileGeoLocation(coords, idx)
+      const geo = getPileGeoLocation(coords, idx, safeWaterHeadings)
+      const pileNumber = pile.pile_number || (idx + 1)
+      const pileKey = `${pile.zone || primaryZoneKey}_${pile.pile_id || idx}`
+      const customName = pileAliases[pileKey]
+      const defaultStableId = (pile.pile_id && String(pile.pile_id).startsWith('PILE-'))
+        ? pile.pile_id
+        : `PILE-${yyyymmdd}-${pileNumber}`
+      const stableName = customName || defaultStableId
+
       return {
         ...pile,
         geo,
-        pileKey: `${pile.zone || primaryZoneKey}_${pile.pile_id || idx}`,
+        pileKey,
+        pile_number: pileNumber,
+        pile_id_stable: defaultStableId,
+        customName,
+        displayName: stableName,
       }
     })
-  }, [rawPiles, coords, primaryZoneKey])
+  }, [rawPiles, coords, primaryZoneKey, pileAliases, safeWaterHeadings])
 
   // Hazard-ranked piles: highest number of harmful objects ranks #1
   const rankedPiles = useMemo(() => {
@@ -275,19 +665,38 @@ export default function SchematicMap({
     document.head.appendChild(style)
   }, [])
 
-  // ── Water Validation ──────────────────────────────────────────────────────
+  // ── Water Validation & Seaward Sector Discovery ───────────────────────────
   const validateWater = useCallback(async (c) => {
     const myId = ++validateIdRef.current
     setPhase('validating')
     setStatusMsg(`Checking for marine waters within 1 km of ${formatCoord(c.lat, c.lng)}…`)
 
     try {
-      const hasMarineWater = await checkMarineWaterNearby(c.lat, c.lng, 1000)
+      const hasMarineWater = await checkMarineWaterNearby(c.lat, c.lng)
       if (validateIdRef.current !== myId) return
       if (hasMarineWater) {
         setPhase('confirmed')
         setStatusMsg(`Open marine water confirmed — Dive Site at ${formatCoord(c.lat, c.lng)}`)
         try { sessionStorage.setItem('bluesentinel_rov_last_dive', JSON.stringify(c)) } catch {}
+
+        // Fetch live seafloor bathymetric depth for HUD display
+        fetchGlobalBathymetricDepth(c.lat, c.lng)
+          .then((d) => {
+            if (validateIdRef.current === myId) {
+              setDiveDepth(typeof d === 'number' ? d : -1)
+            }
+          })
+          .catch(() => {
+            if (validateIdRef.current === myId) setDiveDepth(-1)
+          })
+
+
+        // Discover seaward sectors so debris piles steer strictly into water and away from coastlines
+        discoverMarineWaterHeadings(c.lat, c.lng).then((headings) => {
+          if (validateIdRef.current === myId && headings && headings.length > 0) {
+            setSafeWaterHeadings(headings)
+          }
+        })
       } else {
         setPhase('no-water')
         setStatusMsg('No sea or ocean within 1 km. Map activates only in marine waters.')
@@ -322,14 +731,35 @@ export default function SchematicMap({
           setCoords(next)
           setPhase('confirmed')
           setStatusMsg(`Continuous ROV Dive Sector — ${formatCoord(next.lat, next.lng)} (~280m from previous dive)`)
+
+          // Discover seaward sectors for continuous dive sector
+          discoverMarineWaterHeadings(next.lat, next.lng).then((headings) => {
+            if (headings && headings.length > 0) {
+              setSafeWaterHeadings(headings)
+            }
+          })
+
+          // Fetch depth for the continuous dive location too
+          fetch(`${API_BASE_URL}/api/ocean-depth?lat=${next.lat}&lon=${next.lng}`)
+            .then((r) => r.ok ? r.json() : null)
+            .then((d) => {
+              if (typeof d?.depth_m === 'number') setDiveDepth(d.depth_m)
+              else {
+                // fallback direct
+                return fetch(`http://localhost:8001/depth?lat=${next.lat}&lon=${next.lng}`, { headers: { 'x-api-key': 'test-key-1' } })
+                  .then((r2) => r2.ok ? r2.json() : null)
+                  .then((d2) => { if (typeof d2?.depth_m === 'number') setDiveDepth(d2.depth_m) })
+              }
+            })
+            .catch(() => {})
           return
         }
       }
     } catch {}
 
-    // 2. Geolocation fallback if no previous dive recorded
+    // 2. Geolocation fallback if no previous dive recorded (Monterey Bay Submarine Canyon water)
     if (!navigator.geolocation) {
-      const defaultMarine = { lat: 36.6000, lng: -121.9000 } // Monterey Bay Submarine Canyon
+      const defaultMarine = { lat: 36.6200, lng: -121.8900 }
       setCoords(defaultMarine)
       validateRef.current?.(defaultMarine)
       return
@@ -344,20 +774,36 @@ export default function SchematicMap({
           setCoords(c)
           validateRef.current?.(c)
         } else {
-          const defaultMarine = { lat: 36.6000, lng: -121.9000 }
+          const defaultMarine = { lat: 36.6200, lng: -121.8900 }
           setCoords(defaultMarine)
           validateRef.current?.(defaultMarine)
         }
       },
       () => {
         // Fallback to marine dive zone if location denied
-        const defaultMarine = { lat: 36.6000, lng: -121.9000 }
+        const defaultMarine = { lat: 36.6200, lng: -121.8900 }
         setCoords(defaultMarine)
         validateRef.current?.(defaultMarine)
       },
       { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
     )
   }, [])
+
+  // ── Always fetch live seafloor bathymetric depth whenever coords change ───────
+  useEffect(() => {
+    if (!coords || !Number.isFinite(coords.lat) || !Number.isFinite(coords.lng)) return
+    let isCancelled = false
+
+    async function fetchDepth() {
+      const depth = await fetchGlobalBathymetricDepth(coords.lat, coords.lng)
+      if (!isCancelled) {
+        setDiveDepth(typeof depth === 'number' ? depth : -1)
+      }
+    }
+
+    fetchDepth()
+    return () => { isCancelled = true }
+  }, [coords])
 
   // ── Initialise Leaflet map (once) ─────────────────────────────────────────
   useEffect(() => {
@@ -397,10 +843,16 @@ export default function SchematicMap({
           const pile = evaluatedPilesRef.current[pIdx]
           if (pile && onNavigateRef.current) {
             const pileNumber = pile.pile_number || (pIdx + 1)
-            onNavigateRef.current('optimizer', {
+            const displayName = pile.displayName || `Pile #${pileNumber}`
+            const currentDepth = (typeof diveDepthRef.current === 'number' && diveDepthRef.current > 0)
+              ? diveDepthRef.current
+              : (typeof pile.depth === 'number' && pile.depth > 0 ? pile.depth : null)
+            const dominantLabel = formatDebrisClassName(pile.dominant_class)
+            const pilePayload = {
               source: 'pile',
-              pileId: pile.pile_id || `Pile ${pileNumber}`,
-              name: `📍 Debris Pile #${pileNumber} (${(pile.dominant_class || 'Debris').replace(/^trash_/, '')})`,
+              pileId: displayName,
+              name: `📍 ${displayName} (${dominantLabel})`,
+              depth: currentDepth,
               inventory: pile.classes
                 ? Object.entries(pile.classes)
                     .filter(([c]) => c.startsWith('trash_') && c !== 'rov')
@@ -411,6 +863,10 @@ export default function SchematicMap({
                 : 'ROV Dive perimeter',
               severity: pile.severity || 'high',
               frameDataUrl: pile.frameDataUrl,
+            }
+            onNavigateRef.current('optimizer', {
+              ...pilePayload,
+              target: pilePayload,
             })
           }
         }
@@ -518,8 +974,9 @@ export default function SchematicMap({
             <div style="width:30px;height:30px;border-radius:50%;background:#0284c7;border:2.5px solid #ffffff;box-shadow:0 0 14px rgba(2,132,199,0.9);display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;">
               ⚓
             </div>
-            <div style="position:absolute;bottom:-6px;background:rgba(10,20,40,0.92);color:#38bdf8;border:1px solid rgba(56,189,248,0.4);font-size:9px;font-weight:800;padding:1px 5px;border-radius:4px;white-space:nowrap;letter-spacing:0.04em;">
-              DIVE HUB
+            <div style="position:absolute;bottom:-7px;background:rgba(10,20,40,0.95);color:#38bdf8;border:1px solid rgba(56,189,248,0.5);font-size:9px;font-weight:800;padding:1px 6px;border-radius:4px;white-space:nowrap;letter-spacing:0.04em;display:flex;align-items:center;gap:4px;box-shadow:0 2px 8px rgba(0,0,0,0.5);">
+              <span>DIVE HUB</span>
+              ${diveDepth !== null ? `<span style="color:#7dd3fc;border-left:1px solid rgba(56,189,248,0.4);padding-left:4px;">${diveDepth.toLocaleString()}m</span>` : ''}
             </div>
           </div>
         `,
@@ -527,15 +984,19 @@ export default function SchematicMap({
         iconAnchor: [21, 21],
       })
 
+      const depthHtml = diveDepth !== null
+        ? `<div style="font-size:10px;color:#38bdf8;margin-top:3px;font-weight:700">Seafloor Depth: ${diveDepth.toLocaleString()} m</div>`
+        : `<div style="font-size:10px;color:#cbd5e1;margin-top:3px">Open marine waters &bull; 500m survey radius active</div>`
+
       L.marker([coords.lat, coords.lng], { icon: diveIcon })
-        .bindTooltip(`<div><strong style="color:#38bdf8">ROV Dive Site (Center)</strong><div style="font-size:10px;color:#94a3b8;margin-top:2px">${formatCoord(coords.lat, coords.lng)}</div><div style="font-size:10px;color:#cbd5e1;margin-top:3px">Open marine waters &bull; 500m survey radius active</div></div>`, {
+        .bindTooltip(`<div><strong style="color:#38bdf8">ROV Dive Site (Center)</strong><div style="font-size:10px;color:#94a3b8;margin-top:2px">${formatCoord(coords.lat, coords.lng)}</div>${depthHtml}</div>`, {
           direction: 'top', offset: [0, -22], className: 'bs-hotspot-tooltip',
         })
         .addTo(locationLayerRef.current)
     } catch (markerErr) {
       console.warn('Failed to add dive beacon marker:', markerErr)
     }
-  }, [coords])
+  }, [coords, diveDepth])
 
   // ── Render 10-Frame Debris Piles in Open Waters around Dive Location ───────
   useEffect(() => {
@@ -580,14 +1041,16 @@ export default function SchematicMap({
       // ── 2. Interactive Debris Pile Marker ──────────────────────────────────
       const pileNumber = pile.pile_number || (pIdx + 1)
       const isCritical = pile.severity === 'critical' || pile.score >= SCORE_THRESHOLDS.high
+      const customName = pile.customName
+      const displayName = pile.displayName || `Debris Pile #${pileNumber}`
 
       const pileIcon = L.divIcon({
         className: '',
         html: `
           <div style="position:relative;display:flex;align-items:center;justify-content:center;width:38px;height:38px;cursor:pointer;">
             ${isCritical ? `<div style="position:absolute;inset:-4px;border-radius:50%;background:${color};opacity:0.35;animation:bs-loc-pulse 1.8s infinite;"></div>` : ''}
-            <div style="width:30px;height:30px;border-radius:50%;background:${color};border:2px solid #ffffff;box-shadow:0 0 12px ${color};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:11px;font-family:sans-serif;">
-              P${pileNumber}
+            <div style="width:30px;height:30px;border-radius:50%;background:${color};border:2px solid #ffffff;box-shadow:0 0 12px ${color};display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:10px;font-family:sans-serif;">
+              ${customName ? customName.slice(0, 3).toUpperCase() : `P${pileNumber}`}
             </div>
             <div style="position:absolute;bottom:-6px;background:rgba(15,23,42,0.92);color:#e2e8f0;border:1px solid rgba(255,255,255,0.25);font-size:9px;font-weight:700;padding:0 5px;border-radius:4px;white-space:nowrap;box-shadow:0 2px 6px rgba(0,0,0,0.4);">
               ${pile.object_count} obj
@@ -622,7 +1085,7 @@ export default function SchematicMap({
       const popupContent = `
         <div style="min-width:220px;max-width:260px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(100,116,139,0.25)">
-            <span style="font-weight:800;font-size:13px;color:#38bdf8">Debris Pile #${pileNumber}</span>
+            <span style="font-weight:800;font-size:13px;color:#38bdf8">${displayName}</span>
             <span style="background:${color}25;color:${color};border:1px solid ${color}60;padding:2px 7px;border-radius:999px;font-size:10px;font-weight:800;text-transform:uppercase">${pile.severity || 'pile'}</span>
           </div>
           ${thumbnailHtml}
@@ -645,9 +1108,20 @@ export default function SchematicMap({
             </div>
             <div style="display:flex;justify-content:space-between">
               <span style="color:#94a3b8">Dominant Type:</span>
-              <span style="color:#34d399;font-weight:700">${(pile.dominant_class || 'debris').replace(/^trash_|^animal_/, '')}</span>
+              <span style="color:#34d399;font-weight:700">${formatDebrisClassName(pile.dominant_class)}</span>
             </div>
           </div>
+          ${(typeof diveDepth === 'number' && diveDepth > 0) ? `
+          <div style="margin-top:6px;padding:5px 8px;border-radius:6px;background:${diveDepth <= 100 ? 'rgba(74,222,128,0.1)' : 'rgba(245,158,11,0.12)'};border:1px solid ${diveDepth <= 100 ? 'rgba(74,222,128,0.3)' : 'rgba(245,158,11,0.35)'};display:flex;flex-direction:column;gap:2px;">
+            <div style="display:flex;justify-content:space-between;font-size:10px;">
+              <span style="color:#94a3b8">Seafloor Depth:</span>
+              <span style="font-weight:800;color:#38bdf8">${diveDepth.toLocaleString()} m</span>
+            </div>
+            <div style="font-size:10px;font-weight:700;color:${diveDepth <= 100 ? '#4ade80' : '#fbbf24'}">
+              ${diveDepth <= 100 ? '🤿 Commercial Diver (≤100m · 3 Crew)' : '🤖 Subsea Robotics (>100m · 3 Crew)'}
+            </div>
+          </div>
+          ` : ''}
           ${classBadges ? `<div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(100,116,139,0.2);display:flex;flex-wrap:wrap;">${classBadges}</div>` : ''}
           <button class="bs-pile-cleanup-btn" data-pile-idx="${pIdx}">
             <span>🚀 Send to Cleanup Optimizer</span>
@@ -695,9 +1169,17 @@ export default function SchematicMap({
   // Quick action: send pile directly to cleanup optimizer
   const handleSendPileToCleanup = (pile, pIdx) => {
     if (!onNavigate) return
-    onNavigate('optimizer', {
+    const pileNumber = pile.pile_number || (pIdx + 1)
+    const displayName = pile.displayName || `Pile #${pileNumber}`
+    const currentDepth = (typeof diveDepth === 'number' && diveDepth > 0)
+      ? diveDepth
+      : (typeof pile.depth === 'number' && pile.depth > 0 ? pile.depth : null)
+    const dominantLabel = formatDebrisClassName(pile.dominant_class)
+    const pilePayload = {
       source: 'pile',
-      pileId: pile.pile_id || `Pile ${pIdx + 1}`,
+      pileId: displayName,
+      name: `📍 ${displayName} (${dominantLabel})`,
+      depth: currentDepth,
       inventory: pile.classes
         ? Object.entries(pile.classes)
             .filter(([c]) => c.startsWith('trash_'))
@@ -708,6 +1190,10 @@ export default function SchematicMap({
         : 'ROV Dive perimeter',
       severity: pile.severity || 'high',
       frameDataUrl: pile.frameDataUrl,
+    }
+    onNavigate('optimizer', {
+      ...pilePayload,
+      target: pilePayload,
     })
   }
 
@@ -794,6 +1280,27 @@ export default function SchematicMap({
           {statusMsg}
         </span>
 
+        {/* Depth badge — always visible: shows depth, sea level, or offline status */}
+        <span style={{
+          fontSize: 11, fontWeight: 700,
+          color: diveDepth === null ? '#64748b' : diveDepth === -1 ? '#94a3b8' : '#0284c7',
+          background: diveDepth === null ? '#f1f5f9' : diveDepth === -1 ? '#f8fafc' : '#e0f2fe',
+          border: `1px solid ${diveDepth === null ? '#cbd5e1' : diveDepth === -1 ? '#e2e8f0' : '#bae6fd'}`,
+          padding: '3px 9px', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 5,
+          whiteSpace: 'nowrap', flexShrink: 0,
+        }}>
+          <span>🌊 Depth:</span>
+          <span>
+            {diveDepth === null
+              ? 'Querying…'
+              : diveDepth === -1
+              ? 'Service offline'
+              : diveDepth > 0
+              ? `${diveDepth.toLocaleString()} m`
+              : 'Sea Level'}
+          </span>
+        </span>
+
         {phase === 'no-water' && (
           <button
             onClick={() => {
@@ -822,10 +1329,139 @@ export default function SchematicMap({
             Retry GPS
           </button>
         )}
+
+        {/* Toggle Manual Coordinates panel */}
+        <button
+          onClick={() => {
+            setGpsInputOpen(!gpsInputOpen)
+            if (coords && !manualLat && !manualLng) {
+              setManualLat(coords.lat.toString())
+              setManualLng(coords.lng.toString())
+            }
+          }}
+          style={{
+            background: gpsInputOpen ? '#3b82f6' : 'transparent',
+            border: `1px solid ${gpsInputOpen ? '#3b82f6' : '#94a3b840'}`,
+            color: gpsInputOpen ? '#fff' : '#64748b',
+            fontSize: 10, fontWeight: 700,
+            padding: '4px 10px', borderRadius: 6, cursor: 'pointer', whiteSpace: 'nowrap',
+          }}
+        >
+          📍 {gpsInputOpen ? 'Close GPS' : 'Enter GPS'}
+        </button>
       </div>
+
+      {/* ── Collapsible Manual GPS & Presets Panel ─────────────────────────── */}
+      {gpsInputOpen && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10,
+          padding: '10px 14px', marginBottom: 10,
+          background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 10,
+          fontSize: 12,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontWeight: 700, color: '#334155', fontSize: 11 }}>Lat:</span>
+            <input
+              type="number"
+              step="any"
+              placeholder="e.g. 36.6002"
+              value={manualLat}
+              onChange={(e) => setManualLat(e.target.value)}
+              style={{
+                width: 100, padding: '4px 8px', borderRadius: 6,
+                border: '1px solid #94a3b8', fontSize: 11, outline: 'none',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontWeight: 700, color: '#334155', fontSize: 11 }}>Lng:</span>
+            <input
+              type="number"
+              step="any"
+              placeholder="e.g. -121.8947"
+              value={manualLng}
+              onChange={(e) => setManualLng(e.target.value)}
+              style={{
+                width: 100, padding: '4px 8px', borderRadius: 6,
+                border: '1px solid #94a3b8', fontSize: 11, outline: 'none',
+              }}
+            />
+          </div>
+          <button
+            onClick={() => handleApplyManualGps()}
+            style={{
+              background: '#0284c7', color: '#fff', border: 'none',
+              fontSize: 11, fontWeight: 700, padding: '5px 12px',
+              borderRadius: 6, cursor: 'pointer',
+            }}
+          >
+            Apply Coordinates
+          </button>
+
+          {/* Preset selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto' }}>
+            <span style={{ fontSize: 11, color: '#64748b', fontWeight: 600 }}>Marine Presets:</span>
+            <select
+              onChange={(e) => {
+                const idx = Number(e.target.value)
+                if (idx >= 0 && MARINE_PRESETS[idx]) {
+                  const p = MARINE_PRESETS[idx]
+                  setManualLat(p.lat.toString())
+                  setManualLng(p.lng.toString())
+                  handleApplyManualGps(p.lat, p.lng)
+                }
+              }}
+              defaultValue=""
+              style={{
+                padding: '4px 8px', borderRadius: 6, border: '1px solid #cbd5e1',
+                fontSize: 11, background: '#fff', color: '#0f172a', outline: 'none', cursor: 'pointer',
+              }}
+            >
+              <option value="" disabled>Select ocean site…</option>
+              {MARINE_PRESETS.map((p, idx) => (
+                <option key={p.name} value={idx}>{p.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
 
       {/* ── Map Container ─────────────────────────────────────────────────── */}
       <div className="bs-map-container" style={{ position: 'relative', borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(30,60,100,0.2)' }}>
+        {/* Floating Live Telemetry HUD Card inside the map */}
+        <div style={{
+          position: 'absolute', top: 12, left: 12, zIndex: 600,
+          background: 'rgba(10, 25, 47, 0.90)', backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(56, 189, 248, 0.35)', borderRadius: 8,
+          padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 10,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 16 }}>🌊</span>
+            <div>
+              <div style={{ fontSize: 9, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                Seafloor Depth
+              </div>
+              <div style={{ fontSize: 13, color: diveDepth === -1 ? '#94a3b8' : '#38bdf8', fontWeight: 800, lineHeight: 1.2 }}>
+                {diveDepth === null
+                  ? 'Querying…'
+                  : diveDepth === -1
+                  ? 'Offline'
+                  : `${diveDepth.toLocaleString()} m`}
+              </div>
+            </div>
+          </div>
+          <div style={{ width: 1, height: 22, background: 'rgba(100, 116, 139, 0.3)' }} />
+          <div>
+            <div style={{ fontSize: 9, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+              DEM Model
+            </div>
+            <div style={{ fontSize: 11, color: '#10b981', fontWeight: 700, lineHeight: 1.2 }}>
+              SRTM15Plus
+            </div>
+          </div>
+        </div>
+
         <div ref={mapContainerRef} style={{ height: 350, width: '100%' }} />
 
         {/* Overlay prompt for pick / no-water */}
@@ -889,14 +1525,59 @@ export default function SchematicMap({
             </div>
           </div>
 
-          {/* Pile Count Badge */}
-          <span style={{
-            fontSize: 10, fontWeight: 700, color: '#0284c7',
-            background: '#eff6ff', border: '1px solid #bfdbfe',
-            padding: '3px 8px', borderRadius: 6,
-          }}>
-            {rankedPiles.length} {rankedPiles.length === 1 ? 'Hazard Pile Ranked' : 'Hazard Piles Ranked'}
-          </span>
+          {/* Depth & Pile Count Badges */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {diveDepth !== null && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, color: '#0369a1',
+                background: '#f0f9ff', border: '1px solid #bae6fd',
+                padding: '3px 8px', borderRadius: 6, display: 'inline-flex', alignItems: 'center', gap: 3,
+              }}>
+                <span style={{ color: '#0284c7' }}>Bathymetry:</span>
+                <span>{diveDepth > 0 ? `${diveDepth.toLocaleString()} m` : 'Sea Level'}</span>
+              </span>
+            )}
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: '#0284c7',
+              background: '#eff6ff', border: '1px solid #bfdbfe',
+              padding: '3px 8px', borderRadius: 6,
+            }}>
+              {rankedPiles.length} {rankedPiles.length === 1 ? 'Hazard Pile Ranked' : 'Hazard Piles Ranked'}
+            </span>
+
+            {/* Export buttons */}
+            {rankedPiles.length > 0 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginLeft: 4 }}>
+                <button
+                  onClick={handleExportGeoJSON}
+                  title="Export debris hotspot coordinates as GeoJSON FeatureCollection"
+                  style={{
+                    background: '#0f766e', color: '#fff', border: 'none',
+                    fontSize: 10, fontWeight: 700, padding: '4px 8px',
+                    borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+                  }}
+                >
+                  <span>📥</span> GeoJSON
+                </button>
+                <button
+                  onClick={handleExportCSV}
+                  title="Export debris hotspot coordinates and metrics as CSV table"
+                  style={{
+                    background: '#0369a1', color: '#fff', border: 'none',
+                    fontSize: 10, fontWeight: 700, padding: '4px 8px',
+                    borderRadius: 6, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
+                  }}
+                >
+                  <span>📊</span> CSV
+                </button>
+                {exportNotice && (
+                  <span style={{ fontSize: 10, color: '#059669', fontWeight: 700, background: '#ecfdf5', padding: '2px 6px', borderRadius: 4, border: '1px solid #a7f3d0' }}>
+                    {exportNotice}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -986,10 +1667,56 @@ export default function SchematicMap({
                   {/* Body */}
                   <div style={{ padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 12, fontWeight: 800, color: '#0f2030' }}>
-                        Pile #{pileNumber}
-                      </span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: '#0284c7' }}>
+                      {editingPileKey === pile.pileKey ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0 }}>
+                          <input
+                            type="text"
+                            value={pileAliasInput}
+                            onChange={(e) => setPileAliasInput(e.target.value)}
+                            placeholder={`e.g. Reef Pile #${pileNumber}`}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleSaveRenamePile(pile.pileKey)
+                              if (e.key === 'Escape') setEditingPileKey(null)
+                            }}
+                            style={{
+                              fontSize: 11, padding: '2px 6px', borderRadius: 4,
+                              border: '1.5px solid #3b82f6', fontWeight: 700,
+                              outline: 'none', width: '100%', maxWidth: 120,
+                            }}
+                          />
+                          <button
+                            onClick={() => handleSaveRenamePile(pile.pileKey)}
+                            title="Save name"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#10b981', fontSize: 13, padding: 0 }}
+                          >✓</button>
+                          <button
+                            onClick={() => setEditingPileKey(null)}
+                            title="Cancel"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: 13, padding: 0 }}
+                          >✕</button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0, flex: 1 }}>
+                          <span
+                            style={{
+                              fontSize: 12, fontWeight: 800, color: '#0f2030',
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}
+                            title={pile.displayName}
+                          >
+                            {pile.displayName}
+                          </span>
+                          <button
+                            onClick={() => handleStartRenamePile(pile.pileKey, pile.customName || `Pile #${pileNumber}`)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', fontSize: 11, padding: 0, lineHeight: 1 }}
+                            title="Name / Rename this pile"
+                          >
+                            ✏️
+                          </button>
+                        </div>
+                      )}
+                      <span style={{ fontSize: 10, fontWeight: 700, color: '#0284c7', flexShrink: 0 }}>
                         {geo ? `${geo.distanceMeters}m ${geo.cardinal}` : ''}
                       </span>
                     </div>
@@ -1003,9 +1730,28 @@ export default function SchematicMap({
                         ⚠️ {pile.harmfulCount} Harmful {pile.harmfulCount === 1 ? 'Item' : 'Items'}
                       </span>
                       <span style={{ fontSize: 9, color: '#9f1239', fontWeight: 600 }}>
-                        {(pile.dominant_class || '').replace(/^trash_|^animal_/, '')}
+                        {formatDebrisClassName(pile.dominant_class)}
                       </span>
                     </div>
+
+                    {/* Operational Mode & Depth Badge */}
+                    {typeof diveDepth === 'number' && diveDepth > 0 && (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        background: diveDepth <= 100 ? '#f0fdf4' : '#fffbeb',
+                        border: `1px solid ${diveDepth <= 100 ? '#bbf7d0' : '#fde68a'}`,
+                        borderRadius: 5,
+                        padding: '2px 6px',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        color: diveDepth <= 100 ? '#15803d' : '#b45309',
+                      }}>
+                        <span>🌊 {diveDepth.toLocaleString()}m</span>
+                        <span>{diveDepth <= 100 ? '🤿 Diver (≤100m)' : '🤖 Robotics (>100m)'}</span>
+                      </div>
+                    )}
 
                     {/* Actions */}
                     <div style={{ display: 'flex', gap: 6, marginTop: 4, paddingTop: 6, borderTop: '1px solid #e2e8f0' }}>

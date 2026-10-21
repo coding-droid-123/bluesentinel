@@ -35,7 +35,7 @@ CLASS_WEIGHT: Dict[str, float] = {
     "trash_clothing": 1.0,
     "trash_branch": 0.8,
     "trash_snack_wrapper": 0.8,
-    "trash_unknown_instance": 1.0,
+    "trash_unknown_instance": 0.8,
 }
 DEFAULT_WEIGHT: float = 1.0
 
@@ -50,6 +50,7 @@ ANIMALS: Set[str] = {
 }
 
 ALERT_PILE_THRESHOLD: int = 5
+DEFAULT_IOU_THRESHOLD: float = 0.20
 DEFAULT_WINDOW_SIZE: int = 30
 DEFAULT_GAP_THRESHOLD: int = 10
 
@@ -120,7 +121,7 @@ def box_iou(b1: List[float], b2: List[float]) -> float:
 class ZoneTracker:
     """Multi-Object Tracker instance isolated to a single zone."""
 
-    def __init__(self, zone: str, iou_threshold: float = 0.35, max_lost_frames: int = 8):
+    def __init__(self, zone: str, iou_threshold: float = DEFAULT_IOU_THRESHOLD, max_lost_frames: int = 8):
         self.zone: str = zone
         self.iou_threshold: float = iou_threshold
         self.max_lost_frames: int = max_lost_frames

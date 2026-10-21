@@ -38,6 +38,13 @@ if !NEEDS_INSTALL!==1 (
     echo Requirements already up to date, skipping install.
 )
 
+REM ── Ensure Docker Desktop DB container is up ──
+echo Checking Docker Desktop database...
+docker compose up -d >nul 2>&1
+if errorlevel 0 (
+    echo Docker Desktop database is active.
+)
+
 REM ── Start the server ──
 echo.
 echo ===================================

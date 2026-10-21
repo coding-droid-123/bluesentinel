@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import NavBar from './NavBar'
 import SchematicMap from './SchematicMap'
+import TensorRTModal from './TensorRTModal'
 import { API_BASE_URL } from '../config'
 import { addHistoryRecord } from '../hooks/useHistory'
 import {
@@ -14,8 +15,16 @@ import {
   getColor,
   boxIoU,
   drawBoxes,
+  TRACKING_IOU_THRESHOLD,
 } from '../utils/drawing'
 import { evaluateAlerts, weightedScore } from '../utils/alerts'
+
+function formatVideoTime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00'
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+}
 
 export default function ROVSimulator({ onNavigate }) {
   const [videoFile, setVideoFile]               = useState(null)
@@ -32,11 +41,37 @@ export default function ROVSimulator({ onNavigate }) {
   const [errorMsg, setErrorMsg]                 = useState('')
   const [backendOnline, setBackendOnline]       = useState(null)
   const [modelFormat, setModelFormat]           = useState('ONNX')
+  const [showTrtModal, setShowTrtModal]         = useState(false)
+  const [hasCompiledEngine, setHasCompiledEngine] = useState(false)
   const [playMode, setPlayMode]                 = useState('step') // 'step' (Synchronized Step-Through) | 'continuous' (Continuous Video)
   const [playbackSpeed, setPlaybackSpeed]       = useState(0.25)  // default slow speed
   const [frameStep, setFrameStep]               = useState(0.5)   // how many seconds to advance per detection step
   const [boxHoldTime, setBoxHoldTime]            = useState(800)   // how long (ms) to display boxes before advancing
   const [frameInterval, setFrameInterval]       = useState(0)     // continuous detection pace (0 = auto)
+
+  // ── Scrubber & Live FPS Telemetry State ──────────────────────────────────
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0)
+  const [videoDuration, setVideoDuration]       = useState(0)
+  const [fpsHistory, setFpsHistory]             = useState([]) // rolling buffer of instant FPS
+  const lastFrameTimestampRef                   = useRef(null)
+
+  const handleScrub = (newTime) => {
+    const t = Number(newTime)
+    setVideoCurrentTime(t)
+    if (videoRef.current) {
+      videoRef.current.currentTime = t
+      if (!isRunningRef.current || isPausedRef.current) {
+        drawBoxes(overlayRef.current, videoRef.current, latestDetsRef.current)
+      }
+    }
+  }
+
+  const handleStepJump = (deltaSec) => {
+    if (!videoRef.current) return
+    const cur = videoRef.current.currentTime || 0
+    const next = Math.max(0, Math.min(videoDuration || 9999, cur + deltaSec))
+    handleScrub(next)
+  }
 
   const videoRef         = useRef(null)
   const videoUrlRef      = useRef(null)
@@ -205,7 +240,7 @@ export default function ROVSimulator({ onNavigate }) {
           if (matchedIndices.has(i)) continue
           if (prevTracks[i].class === det.class) {
             const iou = boxIoU(prevTracks[i].box, det.box)
-            if (iou > bestIoU && iou >= 0.35) {
+            if (iou > bestIoU && iou >= TRACKING_IOU_THRESHOLD) {
               bestIoU = iou
               bestIdx = i
             }
@@ -258,8 +293,21 @@ export default function ROVSimulator({ onNavigate }) {
       setTotalObjects(uniqueCountRef.current)
 
       framesSentRef.current += 1
-      const elapsed = (Date.now() - startTimeRef.current) / 1000
-      if (elapsed > 0) setFps((framesSentRef.current / elapsed).toFixed(1))
+      const now = Date.now()
+      const elapsed = (now - startTimeRef.current) / 1000
+      let instantFps = 0
+      if (lastFrameTimestampRef.current) {
+        const deltaSec = (now - lastFrameTimestampRef.current) / 1000
+        if (deltaSec > 0) instantFps = Math.min(60, 1 / deltaSec)
+      }
+      lastFrameTimestampRef.current = now
+
+      if (elapsed > 0) {
+        const avgFps = parseFloat((framesSentRef.current / elapsed).toFixed(1))
+        setFps(avgFps.toString())
+        const plotVal = instantFps > 0 ? parseFloat(instantFps.toFixed(1)) : avgFps
+        setFpsHistory((prev) => [...prev.slice(-35), plotVal])
+      }
 
       // Alerts & automatic triage incident dispatch
       const alertFrameDataUrl = captureFrameDataUrl()
@@ -373,9 +421,13 @@ export default function ROVSimulator({ onNavigate }) {
           else if (score >= 6 || w.hasHazard) severity = 'high'
           else if (score >= 2) severity = 'medium'
 
+          const dNow = new Date()
+          const yyyymmdd = `${dNow.getFullYear()}${String(dNow.getMonth() + 1).padStart(2, '0')}${String(dNow.getDate()).padStart(2, '0')}`
+          const stableId = `PILE-${yyyymmdd}-${pileSeqIdx + 1}`
+
           return {
             zone: zoneName,
-            pile_id: `pile_${Number(wIdx) + 1}`,
+            pile_id: stableId,
             pile_number: pileSeqIdx + 1,
             window_index: Number(wIdx),
             frame_start: w.frameStart,
@@ -420,8 +472,9 @@ export default function ROVSimulator({ onNavigate }) {
     setIsPaused(false)
     setStatus('done')
 
-    // Persist completed mission summary to backend /missions/finish
-    if (frameNumRef.current > 0) {
+    // Persist completed mission summary only when meaningful detections exist
+    const hasDetections = (uniqueCountRef.current || 0) > 0
+    if (frameNumRef.current > 0 && hasDetections) {
       const elapsedSec = startTimeRef.current
         ? Math.max(0.1, (Date.now() - startTimeRef.current) / 1000)
         : 0.1
@@ -430,6 +483,7 @@ export default function ROVSimulator({ onNavigate }) {
         : 0
 
       const payload = {
+        mission_id: missionIdRef.current || undefined,
         name: videoFile ? `ROV Survey - ${videoFile.name}` : `ROV Survey ${new Date().toLocaleTimeString()}`,
         video_source: videoFile ? videoFile.name : 'rov_stream',
         duration_sec: parseFloat(elapsedSec.toFixed(1)),
@@ -499,10 +553,22 @@ export default function ROVSimulator({ onNavigate }) {
             .filter(([cls]) => cls.startsWith('trash_'))
             .map(([cls, cnt]) => ({ class: cls, count: cnt })),
           location: 'ROV Underwater Transect',
+          meta: { missionId: missionIdRef.current || undefined },
         })
       } catch (histErr) {
         console.warn('Failed to record ROV mission to history:', histErr)
       }
+    } else if (missionIdRef.current) {
+      // Discard placeholder mission from DB
+      fetch(`${API_BASE_URL}/missions/finish`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mission_id: missionIdRef.current,
+          total_unique_objects: 0,
+          duration_sec: 0,
+        }),
+      }).catch(() => {})
     }
   }, [videoFile, modelFormat, latency, alerts])
 
@@ -676,6 +742,9 @@ export default function ROVSimulator({ onNavigate }) {
     setTotalObjects(0)
     setFps(null)
     setLatency(null)
+    setVideoCurrentTime(0)
+    setFpsHistory([])
+    lastFrameTimestampRef.current = null
     frameNumRef.current = 0
     framesSentRef.current = 0
     pileAccRef.current = []
@@ -859,16 +928,63 @@ export default function ROVSimulator({ onNavigate }) {
               </>
             )}
 
-            {/* Model format */}
-            <select
-              value={modelFormat}
-              onChange={(e) => setModelFormat(e.target.value)}
-              style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: 12, padding: '6px 8px', borderRadius: 6, outline: 'none' }}
-            >
-              <option value="ONNX" style={{ color: '#000' }}>ONNX</option>
-              <option value="TorchScript" style={{ color: '#000' }}>TorchScript</option>
-              <option value="TensorRT" style={{ color: '#000' }}>TensorRT (GPU)</option>
-            </select>
+            {/* Model format & TensorRT Compiler */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <select
+                value={modelFormat}
+                onChange={(e) => setModelFormat(e.target.value)}
+                style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', fontSize: 12, padding: '6px 8px', borderRadius: 6, outline: 'none' }}
+              >
+                <option value="ONNX" style={{ color: '#000' }}>ONNX</option>
+                <option value="TorchScript" style={{ color: '#000' }}>TorchScript</option>
+                <option value="TensorRT" style={{ color: '#000' }}>TensorRT (GPU)</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={() => setShowTrtModal(true)}
+                style={{
+                  background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.25) 0%, rgba(3, 105, 161, 0.4) 100%)',
+                  border: '1px solid rgba(56, 189, 248, 0.45)',
+                  color: '#38bdf8',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  padding: '6px 12px',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  transition: 'all 0.2s ease',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(2, 132, 199, 0.45) 0%, rgba(3, 105, 161, 0.6) 100%)'
+                  e.currentTarget.style.borderColor = '#38bdf8'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(2, 132, 199, 0.25) 0%, rgba(3, 105, 161, 0.4) 100%)'
+                  e.currentTarget.style.borderColor = 'rgba(56, 189, 248, 0.45)'
+                }}
+                title="Compile ONNX to hardware-specific TensorRT engine for this device's GPU"
+              >
+                <span style={{ fontSize: 13 }}>⚡</span>
+                <span>Build TensorRT (GPU)</span>
+                {hasCompiledEngine && (
+                  <span style={{
+                    background: '#10b981',
+                    color: '#042f2e',
+                    fontSize: 9,
+                    fontWeight: 800,
+                    padding: '1px 5px',
+                    borderRadius: 4,
+                    letterSpacing: '0.04em',
+                  }}>
+                    READY
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Error / backend status */}
@@ -934,8 +1050,9 @@ export default function ROVSimulator({ onNavigate }) {
               </div>
 
               {videoUrl ? (
-                /* Container: video + canvas stacked */
-                <div style={{ position: 'relative', background: '#000', borderRadius: 10, overflow: 'hidden', lineHeight: 0 }}>
+                <>
+                  {/* Container: video + canvas stacked */}
+                  <div style={{ position: 'relative', background: '#000', borderRadius: 10, overflow: 'hidden', lineHeight: 0 }}>
                   <video
                     ref={videoRef}
                     src={videoUrl}
@@ -943,7 +1060,20 @@ export default function ROVSimulator({ onNavigate }) {
                     playsInline
                     style={{ width: '100%', display: 'block', borderRadius: 10 }}
                     onLoadedMetadata={() => {
-                      if (videoRef.current) videoRef.current.playbackRate = playbackSpeed
+                      if (videoRef.current) {
+                        videoRef.current.playbackRate = playbackSpeed
+                        setVideoDuration(videoRef.current.duration || 0)
+                      }
+                    }}
+                    onDurationChange={() => {
+                      if (videoRef.current) {
+                        setVideoDuration(videoRef.current.duration || 0)
+                      }
+                    }}
+                    onTimeUpdate={() => {
+                      if (videoRef.current) {
+                        setVideoCurrentTime(videoRef.current.currentTime || 0)
+                      }
                     }}
                     onError={() => {
                       setErrorMsg('Browser video decoder error: This video format/codec is not supported by your browser (e.g. MPEG-4 Part 2 / FMP4). Chrome and Edge require standard H.264 (AVC) or WebM.')
@@ -978,7 +1108,143 @@ export default function ROVSimulator({ onNavigate }) {
                     </div>
                   )}
                 </div>
-              ) : (
+
+                {/* ── Video Scrubber Bar ── */}
+                <div style={{
+                  marginTop: 10, padding: '8px 12px',
+                  background: 'rgba(15, 23, 42, 0.75)', borderRadius: 8,
+                  border: '1px solid rgba(56, 189, 248, 0.2)',
+                  display: 'flex', flexDirection: 'column', gap: 6,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <button
+                      onClick={() => handleStepJump(-2)}
+                      title="Jump backward 2s"
+                      style={{
+                        background: 'rgba(255,255,255,0.1)', border: 'none', color: '#94a3b8',
+                        borderRadius: 4, padding: '3px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                      }}
+                    >
+                      ⏮ -2s
+                    </button>
+                    <button
+                      onClick={handlePause}
+                      disabled={!isRunning && !isPaused}
+                      title={isPaused ? 'Resume video' : 'Pause video'}
+                      style={{
+                        background: isPaused ? '#10b981' : 'rgba(255,255,255,0.15)',
+                        border: 'none', color: '#fff', borderRadius: 4,
+                        padding: '3px 10px', fontSize: 11, fontWeight: 700,
+                        cursor: (!isRunning && !isPaused) ? 'not-allowed' : 'pointer',
+                        opacity: (!isRunning && !isPaused) ? 0.5 : 1,
+                      }}
+                    >
+                      {isPaused ? '▶' : '⏸'}
+                    </button>
+                    <button
+                      onClick={() => handleStepJump(2)}
+                      title="Jump forward 2s"
+                      style={{
+                        background: 'rgba(255,255,255,0.1)', border: 'none', color: '#94a3b8',
+                        borderRadius: 4, padding: '3px 8px', fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                      }}
+                    >
+                      +2s ⏭
+                    </button>
+
+                    {/* Progress Slider */}
+                    <input
+                      type="range"
+                      min="0"
+                      max={videoDuration || 100}
+                      step="0.1"
+                      value={videoCurrentTime}
+                      onChange={(e) => handleScrub(e.target.value)}
+                      style={{
+                        flex: 1, accentColor: '#38bdf8', cursor: 'pointer', height: 5,
+                      }}
+                    />
+
+                    {/* Time Display */}
+                    <span style={{ fontSize: 11, color: '#38bdf8', fontFamily: 'monospace', fontWeight: 700, minWidth: 80, textAlign: 'right' }}>
+                      {formatVideoTime(videoCurrentTime)} / {formatVideoTime(videoDuration)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* ── Real-time FPS & Inference Performance Chart ── */}
+                <div style={{
+                  marginTop: 10, padding: '10px 14px',
+                  background: 'linear-gradient(135deg, rgba(15,23,42,0.95), rgba(30,41,59,0.90))',
+                  borderRadius: 8, border: '1px solid rgba(56, 189, 248, 0.25)',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: 12 }}>⚡</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#e2e8f0', letterSpacing: '0.04em' }}>
+                        REAL-TIME INFERENCE & FPS
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{
+                        fontSize: 11, fontWeight: 800, fontFamily: 'monospace',
+                        color: Number(fps || 0) >= 10 ? '#34d399' : Number(fps || 0) >= 4 ? '#fbbf24' : '#94a3b8',
+                      }}>
+                        {fps ? `${fps} FPS` : '0.0 FPS'}
+                      </span>
+                      {latency && (
+                        <span style={{ fontSize: 10, color: '#94a3b8', fontFamily: 'monospace' }}>
+                          {latency} ms
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Sparkline Canvas / SVG */}
+                  <div style={{ height: 42, width: '100%', position: 'relative' }}>
+                    {fpsHistory.length > 1 ? (
+                      <svg width="100%" height="42" viewBox="0 0 300 42" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
+                        <defs>
+                          <linearGradient id="fps-fill-grad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.45" />
+                            <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.0" />
+                          </linearGradient>
+                        </defs>
+                        {(() => {
+                          const maxVal = Math.max(15, ...fpsHistory) + 2
+                          const points = fpsHistory.map((val, idx) => {
+                            const x = (idx / (fpsHistory.length - 1)) * 300
+                            const y = 38 - (val / maxVal) * 34
+                            return `${x.toFixed(1)},${y.toFixed(1)}`
+                          })
+                          const firstX = 0
+                          const lastX = 300
+                          const areaPoints = `${firstX},38 ${points.join(' ')} ${lastX},38`
+                          return (
+                            <>
+                              <polygon points={areaPoints} fill="url(#fps-fill-grad)" />
+                              <polyline
+                                points={points.join(' ')}
+                                fill="none"
+                                stroke="#38bdf8"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </>
+                          )
+                        })()}
+                      </svg>
+                    ) : (
+                      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', fontSize: 10, fontStyle: 'italic' }}>
+                        {isRunning ? 'Gathering frame rate samples…' : 'Start simulator to render live throughput telemetry'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
                 /* Empty state */
                 <div onClick={() => fileInputRef.current?.click()} style={{ background: '#0a1520', borderRadius: 10, height: 280, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: '2px dashed #1a4a6a' }}>
                   <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#3a8aaa" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 14 }}>
@@ -1068,6 +1334,16 @@ export default function ROVSimulator({ onNavigate }) {
         <p className="home-footer-title">Blue Sentinel &mdash; ROV Edge Simulator</p>
         <p className="home-footer-sub">RT-DETRv4 &middot; Live bbox overlay via Canvas API &middot; FastAPI port 8000</p>
       </footer>
+
+      {/* TensorRT GPU Hardware Engine Compiler Modal */}
+      <TensorRTModal
+        isOpen={showTrtModal}
+        onClose={() => setShowTrtModal(false)}
+        onSelectEngine={(fmt) => {
+          setModelFormat(fmt)
+          setHasCompiledEngine(true)
+        }}
+      />
     </div>
   )
 }

@@ -82,10 +82,10 @@ export default function HomePage({ onFileSelect, onNavigate }) {
 
       {/* FEATURE CARDS */}
       <section style={{ background: '#ddeaf2', padding: '40px 32px 0' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+        <div style={{ maxWidth: 1100, margin: '0 270px' }}>
           <p className="home-how-label">CAPABILITIES</p>
           <h2 className="home-how-title" style={{ marginBottom: 20 }}>Blue Sentinel Core Workflows</h2>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 20 }}>
             {[
               {
                 icon: '🎥',

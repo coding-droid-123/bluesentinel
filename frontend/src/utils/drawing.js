@@ -4,6 +4,7 @@
  */
 
 export const ALERT_PILE_THRESHOLD = 5
+export const TRACKING_IOU_THRESHOLD = 0.20
 
 export const CLASS_WEIGHT = {
   trash_net: 3,
@@ -19,7 +20,7 @@ export const CLASS_WEIGHT = {
   trash_clothing: 1,
   trash_branch: 0.8,
   trash_snack_wrapper: 0.8,
-  trash_unknown_instance: 1,
+  trash_unknown_instance: 0.8,
 }
 
 export const GHOST_GEAR = new Set(['trash_net', 'trash_rope', 'trash_tarp'])

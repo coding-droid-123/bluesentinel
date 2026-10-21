@@ -12,7 +12,20 @@ export function getHistoryRecords() {
     const raw = localStorage.getItem(STORAGE_KEY) || sessionStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed : []
+    if (!Array.isArray(parsed)) return []
+    // Filter out empty 0-debris / 0-object ROV stub records
+    const valid = parsed.filter((e) => {
+      if (e.type === 'rov') {
+        const total = e.summary?.totalObjects ?? 0
+        const debris = e.summary?.debrisCount ?? 0
+        return total > 0 || debris > 0
+      }
+      return true
+    })
+    if (valid.length !== parsed.length) {
+      saveHistoryRecords(valid)
+    }
+    return valid
   } catch (err) {
     console.warn('Failed to parse BlueSentinel history from storage:', err)
     return []
@@ -66,6 +79,15 @@ function saveHistoryRecords(entries) {
  * Add a record directly (can be called outside React hook lifecycle)
  */
 export function addHistoryRecord(record) {
+  // Discard empty ROV survey runs with 0 detections
+  if (record.type === 'rov') {
+    const total = record.summary?.totalObjects ?? 0
+    const debris = record.summary?.debrisCount ?? 0
+    if (total === 0 && debris === 0) {
+      return null
+    }
+  }
+
   const current = getHistoryRecords()
   const newEntry = sanitizeRecord({
     id: record.id || `hist_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -97,8 +119,15 @@ export function addHistoryRecord(record) {
  */
 export function removeHistoryRecord(id) {
   const current = getHistoryRecords()
+  const target = current.find((e) => e.id === id)
   const updated = current.filter((e) => e.id !== id)
   saveHistoryRecords(updated)
+
+  // Cascade delete to backend database if this was a synced mission
+  const missionId = target?.meta?.missionId || (String(id).startsWith('db_') ? id.replace('db_', '') : null)
+  if (missionId) {
+    fetch(`${API_BASE_URL}/missions/${missionId}`, { method: 'DELETE' }).catch(() => {})
+  }
 }
 
 /**
@@ -108,6 +137,9 @@ export function clearHistoryRecords() {
   try { localStorage.removeItem(STORAGE_KEY) } catch {}
   try { sessionStorage.removeItem(STORAGE_KEY) } catch {}
   window.dispatchEvent(new Event('bluesentinel_history_updated'))
+
+  // Cascade clear all missions from backend database
+  fetch(`${API_BASE_URL}/missions`, { method: 'DELETE' }).catch(() => {})
 }
 
 /**
@@ -141,6 +173,11 @@ export default function useHistory() {
 
         const newFromDb = []
         for (const m of data.missions) {
+          // Ignore empty dummy missions
+          const totalObj = m.total_unique_objects ?? 0
+          const duration = m.duration_sec ?? 0
+          if (totalObj === 0 && duration < 1.0) continue
+
           const dbId = `db_${m.id}`
           if (!existingIds.has(dbId)) {
             // Calculate debris counts from mission summary

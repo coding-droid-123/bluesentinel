@@ -1,0 +1,8 @@
+.env
+depth_cache.db
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.DS_Store

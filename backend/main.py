@@ -16,10 +16,11 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import asyncio
 import json
+import requests as http_requests
 import numpy as np
 from PIL import Image, ImageDraw
 import torch
@@ -41,7 +42,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from huggingface_hub import hf_hub_download
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, engine, async_session
@@ -88,10 +89,10 @@ app.add_middleware(
 
 BACKEND_DIR = Path(__file__).parent.resolve()
 REPO_DIR = BACKEND_DIR / "RT-DETRv4"
-CONFIG_NAME = "dfine_hgnetv2_l_trashcan.yml"
+CONFIG_NAME = "dfine_hgnetv2_s_trashcan.yml"
 CKPT_REPO = "coding-droid-123/trashcan-dfine"
-CKPT_FILE = "best.pth"
-ONNX_FILE = "best.onnx"
+CKPT_FILE = "best_stg2.pth"
+ONNX_FILE = "bs-s.onnx"
 HF_CONFIG_BASE = "https://huggingface.co/spaces/coding-droid-123/BlueSentinel/raw/main"
 
 UPLOADS_DIR = (BACKEND_DIR / "uploads").resolve()
@@ -284,11 +285,15 @@ async def startup_event():
     print(f"BlueSentinel ready. Active AI Engine: {CURRENT_ENGINE_TYPE}")
 
 
+from convert_onnx_to_engine import check_gpu_and_tensorrt_environment, build_tensorrt_engine
+
+
 @app.get("/model/status")
 async def model_status():
     """Return status of the local model weights and active engine."""
     onnx_exists = LOCAL_ONNX_PATH.exists()
     pth_exists = LOCAL_CKPT_PATH.exists()
+    engine_exists = (WEIGHTS_DIR / "bs-s.engine").exists() or (WEIGHTS_DIR / "best.engine").exists()
     return {
         "status": "ready" if (ONNX_SESSION is not None or TORCH_MODEL is not None) else "initializing",
         "engine_type": CURRENT_ENGINE_TYPE,
@@ -296,8 +301,49 @@ async def model_status():
         "onnx_size_mb": round(LOCAL_ONNX_PATH.stat().st_size / (1024 * 1024), 2) if onnx_exists else 0,
         "pth_available": pth_exists,
         "pth_size_mb": round(LOCAL_CKPT_PATH.stat().st_size / (1024 * 1024), 2) if pth_exists else 0,
+        "engine_available": engine_exists,
         "infer_size": INFER_SIZE,
     }
+
+
+@app.get("/model/tensorrt/device-info")
+async def tensorrt_device_info():
+    """Query host hardware capabilities, GPU architecture, and TensorRT availability."""
+    return check_gpu_and_tensorrt_environment(BACKEND_DIR)
+
+
+@app.post("/model/tensorrt/convert")
+async def convert_to_tensorrt(payload: Dict[str, Any] = Body(default={})):
+    """Trigger compilation of ONNX model to hardware-specific TensorRT engine."""
+    onnx_name = payload.get("onnx_name", "bs-s.onnx")
+    fp16 = bool(payload.get("fp16", True))
+    workspace_gb = int(payload.get("workspace_gb", 4))
+    max_batch_size = int(payload.get("max_batch_size", 1))
+
+    onnx_path = WEIGHTS_DIR / onnx_name
+    if not onnx_path.exists():
+        if (WEIGHTS_DIR / "bs-s.onnx").exists():
+            onnx_path = WEIGHTS_DIR / "bs-s.onnx"
+        elif (WEIGHTS_DIR / "best.onnx").exists():
+            onnx_path = WEIGHTS_DIR / "best.onnx"
+        else:
+            raise HTTPException(status_code=404, detail=f"ONNX model '{onnx_name}' not found in {WEIGHTS_DIR}")
+
+    engine_name = f"{onnx_path.stem}.engine"
+    engine_path = WEIGHTS_DIR / engine_name
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: build_tensorrt_engine(
+            onnx_file=onnx_path,
+            engine_file=engine_path,
+            fp16=fp16,
+            max_batch_size=max_batch_size,
+            workspace_gb=workspace_gb,
+        ),
+    )
+    return result
 
 
 # Serve saved annotated images & incident snapshots
@@ -529,7 +575,7 @@ async def ws_batch(websocket: WebSocket):
                                     id=uuid.uuid4(),
                                     name=zone_name,
                                     location_coords=f"Transect frames {z_info['min_frame']}–{z_info['max_frame']}",
-                                    travel_cost_usd=250.0,
+                                    travel_cost_usd=15000.0,
                                     debris_inventory=zone_inventory,
                                 )
                                 session.add(new_zone)
@@ -674,7 +720,7 @@ async def rename_cleanup_zone(
                 id=uuid.uuid4(),
                 name=new_name,
                 location_coords=payload.get("location", "Surveyed coordinates"),
-                travel_cost_usd=payload.get("travel_cost", 250.0),
+                travel_cost_usd=payload.get("travel_cost", 15000.0),
                 debris_inventory=payload.get("inventory", []),
             )
             db.add(zone)
@@ -730,7 +776,6 @@ async def finish_mission(
 ):
     """Save completed ROV survey mission summary, hotspots, and update zone inventory."""
     try:
-        mission_id = uuid.uuid4()
         name = payload.get("name") or f"ROV Survey {time.strftime('%Y-%m-%d %H:%M')}"
         video_source = payload.get("video_source", "recorded_stream")
         duration_sec = float(payload.get("duration_sec", 0.0))
@@ -740,18 +785,53 @@ async def finish_mission(
         avg_latency_ms = float(payload.get("avg_latency_ms", 0.0))
         summary_by_class = payload.get("summary_by_class", {})
 
-        mission = SurveyMission(
-            id=mission_id,
-            name=name,
-            video_source=video_source,
-            duration_sec=duration_sec,
-            zones=zones,
-            total_unique_objects=total_unique_objects,
-            fps=fps,
-            avg_latency_ms=avg_latency_ms,
-            summary_by_class=summary_by_class,
-        )
-        db.add(mission)
+        # Check if updating an existing started mission
+        existing_id_str = payload.get("mission_id")
+        existing_mission = None
+        if existing_id_str:
+            try:
+                mid = uuid.UUID(str(existing_id_str))
+                res = await db.execute(select(SurveyMission).where(SurveyMission.id == mid))
+                existing_mission = res.scalar_one_or_none()
+            except Exception:
+                pass
+
+        # Discard empty / aborted runs with 0 detections
+        if total_unique_objects == 0 and duration_sec < 1.0:
+            if existing_mission:
+                await db.delete(existing_mission)
+                await db.commit()
+            return JSONResponse({
+                "status": "ignored",
+                "mission_id": None,
+                "message": "Empty survey mission discarded (0 detections).",
+            })
+
+        if existing_mission:
+            mission = existing_mission
+            mission.name = name
+            mission.video_source = video_source
+            mission.duration_sec = duration_sec
+            mission.zones = zones
+            mission.total_unique_objects = total_unique_objects
+            mission.fps = fps
+            mission.avg_latency_ms = avg_latency_ms
+            mission.summary_by_class = summary_by_class
+            mission_id = mission.id
+        else:
+            mission_id = uuid.uuid4()
+            mission = SurveyMission(
+                id=mission_id,
+                name=name,
+                video_source=video_source,
+                duration_sec=duration_sec,
+                zones=zones,
+                total_unique_objects=total_unique_objects,
+                fps=fps,
+                avg_latency_ms=avg_latency_ms,
+                summary_by_class=summary_by_class,
+            )
+            db.add(mission)
 
         # Save Top Debris Hotspots
         hotspots_data = payload.get("hotspots", [])
@@ -821,12 +901,49 @@ async def list_missions(
     limit: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return past ROV survey missions, newest first."""
+    """Return past ROV survey missions, newest first. Ignores empty/abandoned stub missions."""
     res = await db.execute(
-        select(SurveyMission).order_by(desc(SurveyMission.created_at)).limit(limit)
+        select(SurveyMission)
+        .where(
+            (SurveyMission.total_unique_objects > 0) | (SurveyMission.duration_sec >= 1.0)
+        )
+        .order_by(desc(SurveyMission.created_at))
+        .limit(limit)
     )
     missions = res.scalars().all()
     return JSONResponse({"missions": [m.to_dict() for m in missions]})
+
+
+@app.delete("/missions/{mission_id}")
+async def delete_mission(mission_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete a survey mission and its associated hotspots and incidents."""
+    try:
+        mid = uuid.UUID(mission_id)
+        res = await db.execute(select(SurveyMission).where(SurveyMission.id == mid))
+        mission = res.scalar_one_or_none()
+        if not mission:
+            return JSONResponse({"status": "not_found", "message": "Mission not found."}, status_code=404)
+
+        await db.execute(delete(DebrisHotspot).where(DebrisHotspot.mission_id == mid))
+        await db.execute(delete(MissionIncident).where(MissionIncident.mission_id == mid))
+        await db.delete(mission)
+        await db.commit()
+        return JSONResponse({"status": "deleted", "mission_id": mission_id})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@app.delete("/missions")
+async def clear_all_missions(db: AsyncSession = Depends(get_db)):
+    """Delete all past survey missions."""
+    try:
+        await db.execute(delete(DebrisHotspot))
+        await db.execute(delete(MissionIncident))
+        await db.execute(delete(SurveyMission))
+        await db.commit()
+        return JSONResponse({"status": "cleared", "message": "All survey missions deleted."})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 
 @app.get("/missions/{mission_id}")
@@ -951,26 +1068,111 @@ async def list_incidents(
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # Feature 3: Cleanup Optimizer (cleanup_zones, cleanup_plans)
 # ---------------------------------------------------------------------------
 
-COST_PER_CREW_HOUR = 45.0  # USD assumption
+from cleanup_optimizer import (
+    optimize_cleanup,
+    GLOBAL_ASSUMPTIONS,
+    get_assumptions_version,
+    normalize_class_name,
+    load_default_assumptions,
+)
+import copy
 
-DEFAULT_ASSUMPTIONS = {
-    "trash_net": {"minH": 0.8, "maxH": 1.5, "crew": 2, "equipment": ["cutters", "lift bags"]},
-    "trash_rope": {"minH": 0.3, "maxH": 0.6, "crew": 1, "equipment": ["cutters"]},
-    "trash_tarp": {"minH": 0.4, "maxH": 0.8, "crew": 2, "equipment": ["lift bags"]},
-    "trash_pipe": {"minH": 0.5, "maxH": 1.0, "crew": 2, "equipment": ["lift bags"]},
-    "trash_wreckage": {"minH": 1.5, "maxH": 3.0, "crew": 3, "equipment": ["lift bags", "cutting tools"]},
-    "trash_bag": {"minH": 0.1, "maxH": 0.2, "crew": 1, "equipment": ["collection sacks"]},
-    "trash_bottle": {"minH": 0.05, "maxH": 0.1, "crew": 1, "equipment": ["collection sacks"]},
-    "trash_cup": {"minH": 0.05, "maxH": 0.1, "crew": 1, "equipment": ["collection sacks"]},
-    "trash_can": {"minH": 0.1, "maxH": 0.2, "crew": 1, "equipment": ["collection sacks"]},
-    "trash_container": {"minH": 0.3, "maxH": 0.6, "crew": 1, "equipment": ["collection sacks"]},
-    "trash_clothing": {"minH": 0.1, "maxH": 0.2, "crew": 1, "equipment": ["collection sacks"]},
-    "trash_snack_wrapper": {"minH": 0.05, "maxH": 0.1, "crew": 1, "equipment": ["collection sacks"]},
-    "default": {"minH": 0.2, "maxH": 0.4, "crew": 1, "equipment": ["collection sacks"]},
-}
+CURRENT_ASSUMPTIONS: Dict[str, Any] = copy.deepcopy(GLOBAL_ASSUMPTIONS)
+
+
+def parse_coords_from_string(loc_str: str) -> Optional[Tuple[float, float]]:
+    """Attempt to parse (lat, lon) from marine coordinate strings like 'Lat 2.3, Lon 108.5'."""
+    import re
+    if not loc_str:
+        return None
+    # Match patterns like: Lat 2.3N, Lon 108.5E or Lat 12.345, Lon 80.123 or 12.345, 80.123
+    lat_m = re.search(r"Lat\s*([+-]?\d+(?:\.\d+)?)\s*([NS])?", loc_str, re.IGNORECASE)
+    lon_m = re.search(r"Lon\s*([+-]?\d+(?:\.\d+)?)\s*([EW])?", loc_str, re.IGNORECASE)
+    if lat_m and lon_m:
+        lat = float(lat_m.group(1))
+        if lat_m.group(2) and lat_m.group(2).upper() == "S":
+            lat = -lat
+        lon = float(lon_m.group(1))
+        if lon_m.group(2) and lon_m.group(2).upper() == "W":
+            lon = -lon
+        return lat, lon
+    # Generic float pair: '12.345, 80.123'
+    pair_m = re.search(r"([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)", loc_str)
+    if pair_m:
+        return float(pair_m.group(1)), float(pair_m.group(2))
+    return None
+
+
+async def fetch_bathymetry_depth(lat: float, lon: float) -> Tuple[Optional[float], str]:
+    """Query local Ocean Depth microservice (port 8001).
+
+    Returns:
+        (depth_m_or_none, status_string)
+        depth_m is None if on land (elevation >= 0) or unreachable.
+    """
+    url = f"http://localhost:8001/depth?lat={lat}&lon={lon}"
+    headers = {"x-api-key": "test-key-1"}
+    try:
+        loop = asyncio.get_event_loop()
+        resp = await loop.run_in_executor(
+            None,
+            lambda: http_requests.get(url, headers=headers, timeout=5.0)
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            depth_m = data.get("depth_m")
+            if depth_m is None:
+                return 0.0, "land"
+            return float(depth_m), "bathymetry"
+    except Exception as e:
+        print(f"[Optimizer] Bathymetry service lookup error: {e}")
+    return None, "simulated"
+
+
+@app.get("/cleanup/assumptions")
+async def get_cleanup_assumptions():
+    """Retrieve active assumptions config and version hash."""
+    return JSONResponse({
+        "status": "success",
+        "version": get_assumptions_version(CURRENT_ASSUMPTIONS),
+        "assumptions": CURRENT_ASSUMPTIONS,
+    })
+
+
+@app.post("/cleanup/assumptions")
+async def update_cleanup_assumptions(payload: Dict[str, Any] = Body(...)):
+    """Update active assumptions with a versioned override."""
+    global CURRENT_ASSUMPTIONS
+    new_cfg = payload.get("assumptions") or payload
+    if not isinstance(new_cfg, dict) or "modes" not in new_cfg or "debris_classes" not in new_cfg:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid assumptions format: must include 'modes' and 'debris_classes'.",
+        )
+    CURRENT_ASSUMPTIONS = copy.deepcopy(new_cfg)
+    version = get_assumptions_version(CURRENT_ASSUMPTIONS)
+    return JSONResponse({
+        "status": "success",
+        "version": version,
+        "assumptions": CURRENT_ASSUMPTIONS,
+    })
+
+
+@app.post("/cleanup/assumptions/reset")
+async def reset_cleanup_assumptions():
+    """Reset assumptions to repository default (cleanup_assumptions.json)."""
+    global CURRENT_ASSUMPTIONS
+    CURRENT_ASSUMPTIONS = copy.deepcopy(GLOBAL_ASSUMPTIONS)
+    version = get_assumptions_version(CURRENT_ASSUMPTIONS)
+    return JSONResponse({
+        "status": "success",
+        "version": version,
+        "assumptions": CURRENT_ASSUMPTIONS,
+    })
 
 
 @app.get("/cleanup/zones")
@@ -993,7 +1195,7 @@ async def generate_cleanup_plan(
     payload: Dict[str, Any] = Body(...),
     db: AsyncSession = Depends(get_db),
 ):
-    """Compute parametric diver hours, equipment, and cost, and save cleanup plan."""
+    """Compute parametric diver/robotics hours, equipment, and cost using the multi-mode model."""
     zone_id_str = payload.get("zone_id")
     if not zone_id_str:
         raise HTTPException(status_code=400, detail="zone_id is required.")
@@ -1001,59 +1203,163 @@ async def generate_cleanup_plan(
     try:
         zid = uuid.UUID(zone_id_str)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid zone_id format.")
+        # Gracefully handle client string IDs like "target-1744..." by generating a deterministic UUID
+        zid = uuid.uuid5(uuid.NAMESPACE_DNS, str(zone_id_str))
 
     res = await db.execute(select(CleanupZone).where(CleanupZone.id == zid))
     zone = res.scalar_one_or_none()
+
+    # If zone doesn't exist yet (e.g. ad-hoc target redirected from map/scanner), auto-create it
     if not zone:
-        raise HTTPException(status_code=404, detail="Cleanup zone not found.")
+        zone_name = payload.get("zone_name") or f"Survey Target {str(zid)[:8]}"
+        loc_coords = payload.get("location_coords") or payload.get("location") or "Surveyed Marine Coordinates"
+        travel_cost = float(payload.get("travel_cost_usd") or 15000.0)
+        debris_inv = payload.get("debris_inventory") or []
+        zone = CleanupZone(
+            id=zid,
+            name=zone_name,
+            location_coords=loc_coords,
+            travel_cost_usd=travel_cost,
+            debris_inventory=debris_inv,
+        )
+        db.add(zone)
+        await db.flush()
 
-    assumptions = payload.get("assumptions", DEFAULT_ASSUMPTIONS)
-    inventory = zone.debris_inventory or []
+    inventory = payload.get("debris_inventory") or zone.debris_inventory or []
 
-    min_hours = 0.0
-    max_hours = 0.0
-    max_crew = 1
-    equipment_set = set()
-
+    # 1. Input Validation: Check min <= max and non-negative
+    items_dict: Dict[str, Dict[str, float]] = {}
     for item in inventory:
-        cls = item.get("class", "default")
+        cls = item.get("class", "unknown")
         cnt = item.get("count", {})
-        min_c = float(cnt.get("min", 1))
-        max_c = float(cnt.get("max", 1))
+        if isinstance(cnt, (int, float)):
+            c_min = float(cnt)
+            c_max = float(cnt)
+        elif isinstance(cnt, dict):
+            c_min = float(cnt.get("min", 1))
+            c_max = float(cnt.get("max", 1))
+        else:
+            c_min, c_max = 1.0, 1.0
 
-        p = assumptions.get(cls, assumptions.get("default", DEFAULT_ASSUMPTIONS["default"]))
-        min_hours += p["minH"] * min_c
-        max_hours += p["maxH"] * max_c
-        if p["crew"] > max_crew:
-            max_crew = p["crew"]
-        for eq in p.get("equipment", []):
-            equipment_set.add(eq)
+        if c_min < 0 or c_max < 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Debris count for '{cls}' cannot be negative.",
+            )
+        if c_min > c_max:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Min count ({c_min}) cannot exceed max count ({c_max}) for '{cls}'.",
+            )
+        items_dict[cls] = {"min": c_min, "max": c_max}
 
-    travel_cost = zone.travel_cost_usd or 0.0
-    min_cost = round(min_hours * max_crew * COST_PER_CREW_HOUR + travel_cost)
-    max_cost = round(max_hours * max_crew * COST_PER_CREW_HOUR + travel_cost)
+    # 2. Determine Depth and Depth Source
+    depth_source = payload.get("depth_source")
+    raw_depth = payload.get("depth_m")
+    if raw_depth is None:
+        raw_depth = payload.get("depth")
 
+    lat = payload.get("lat") or payload.get("latitude")
+    lon = payload.get("lon") or payload.get("longitude")
+    if lat is None or lon is None:
+        coords_parsed = parse_coords_from_string(zone.location_coords or payload.get("location_coords", ""))
+        if coords_parsed:
+            lat, lon = coords_parsed
+
+    depth_val: float = 0.0
+
+    if depth_source == "simulated" or payload.get("is_simulated"):
+        depth_source = "simulated"
+        depth_val = float(raw_depth or 0.0)
+    elif raw_depth is not None and float(raw_depth) > 0 and depth_source != "bathymetry":
+        # Explicit depth provided without bathymetry flag is treated as simulated
+        depth_val = float(raw_depth)
+        depth_source = depth_source or "simulated"
+    elif lat is not None and lon is not None:
+        # Query Ocean Depth Microservice
+        bathy_depth, b_status = await fetch_bathymetry_depth(float(lat), float(lon))
+        if bathy_depth is not None:
+            depth_val = bathy_depth
+            depth_source = b_status
+        else:
+            depth_val = float(raw_depth or 0.0)
+            depth_source = "simulated"
+    else:
+        depth_val = float(raw_depth or 0.0)
+        depth_source = "simulated"
+
+    if depth_val < 0:
+        raise HTTPException(status_code=400, detail=f"Operating depth cannot be negative: {depth_val}m")
+
+    # 3. Execute Parametric Multi-Mode Optimization
+    opt_cfg = payload.get("assumptions") or CURRENT_ASSUMPTIONS
+    dist_km = float(payload.get("dist_km") or 25.0)
+
+    try:
+        opt_res = optimize_cleanup(
+            depth=depth_val,
+            items=items_dict,
+            dist_km=dist_km,
+            depth_source=depth_source,
+            cfg=opt_cfg,
+        )
+    except ValueError as val_err:
+        raise HTTPException(status_code=400, detail=str(val_err))
+
+    # 4. Persist CleanupPlan
     plan_id = uuid.uuid4()
+    cost_min = float(opt_res.get("cost_min") or 0.0)
+    cost_max = float(opt_res.get("cost_max") or 0.0)
+    item_hours = opt_res.get("item_hours", [0.0, 0.0])
+    crew_count = int(opt_res.get("crew") or 1)
+    crew_roles = opt_res.get("crew_roles") or []
+    rec_mode = opt_res.get("recommended")
+
     plan = CleanupPlan(
         id=plan_id,
         zone_id=zid,
         priority_rank=payload.get("priority_rank", 1),
-        estimated_min_hours=round(min_hours, 1),
-        estimated_max_hours=round(max_hours, 1),
-        max_crew_required=max_crew,
-        required_equipment=sorted(list(equipment_set)),
-        estimated_min_cost=float(min_cost),
-        estimated_max_cost=float(max_cost),
+        estimated_min_hours=round(item_hours[0], 1),
+        estimated_max_hours=round(item_hours[1], 1),
+        max_crew_required=crew_count,
+        required_equipment=opt_res.get("required_equipment") or [],
+        estimated_min_cost=cost_min,
+        estimated_max_cost=cost_max,
+        cost_min=cost_min,
+        cost_max=cost_max,
+        mode=rec_mode or "out_of_scope",
+        crew={"count": crew_count, "roles": crew_roles},
+        depth_source=opt_res.get("depth_source", depth_source),
+        assumptions_version=opt_res.get("assumptions_version"),
+        breakdown=opt_res.get("breakdown") or {},
+        warnings=opt_res.get("warnings") or [],
         dispatch_status="approved" if payload.get("auto_dispatch") else "draft",
     )
     db.add(plan)
     await db.commit()
 
     return JSONResponse({
-        "status": "success",
+        "status": opt_res.get("status", "success"),
         "plan_id": str(plan_id),
         "plan": plan.to_dict(),
+        "recommended": rec_mode,
+        "recommended_mode_details": opt_res.get("recommended_mode_details"),
+        "depth_m": depth_val,
+        "depth_source": opt_res.get("depth_source", depth_source),
+        "item_hours": item_hours,
+        "debris_kg": opt_res.get("debris_kg"),
+        "heaviest_item_kg": opt_res.get("heaviest_item_kg"),
+        "crew": crew_count,
+        "crew_roles": crew_roles,
+        "risk": opt_res.get("risk"),
+        "cost_min": cost_min,
+        "cost_max": cost_max,
+        "modes": opt_res.get("modes", []),
+        "breakdown": opt_res.get("breakdown", {}),
+        "warnings": opt_res.get("warnings", []),
+        "unverified_assumptions": opt_res.get("unverified_assumptions", []),
+        "required_equipment": opt_res.get("required_equipment", []),
+        "assumptions_version": opt_res.get("assumptions_version"),
     })
 
 
@@ -1108,6 +1414,117 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
         "total_incidents": total_incidents,
         "active_engine": CURRENT_ENGINE_TYPE,
     })
+
+
+# ---------------------------------------------------------------------------
+# Ocean Depth Proxy — forwards to standalone depth microservice (port 8001)
+# ---------------------------------------------------------------------------
+
+DEPTH_SERVICE_URL = os.environ.get("DEPTH_SERVICE_URL", "http://localhost:8001")
+DEPTH_SERVICE_API_KEY = os.environ.get("DEPTH_SERVICE_API_KEY", "test-key-1")
+
+
+def query_noaa_etopo_depth(lat: float, lon: float) -> Optional[float]:
+    """Query NOAA NCEI ETOPO Global DEM Mosaic ImageServer for seafloor depth in meters."""
+    try:
+        url = "https://gis.ngdc.noaa.gov/arcgis/rest/services/DEM_mosaics/DEM_global_mosaic/ImageServer/identify"
+        params = {
+            "geometry": json.dumps({"x": lon, "y": lat, "spatialReference": {"wkid": 4326}}),
+            "geometryType": "esriGeometryPoint",
+            "returnGeometry": "false",
+            "f": "json",
+        }
+        r = http_requests.get(url, params=params, timeout=6)
+        if r.status_code == 200:
+            val_str = r.json().get("value")
+            if val_str is not None:
+                val = float(val_str)
+                # In ETOPO DEM mosaic, negative values represent depth below sea level
+                if val < 0:
+                    return round(-val, 2)
+    except Exception:
+        pass
+    return None
+
+
+@app.get("/api/ocean-depth")
+async def proxy_ocean_depth(
+    lat: float = Query(..., description="Latitude (-90 to 90)"),
+    lon: float = Query(..., description="Longitude"),
+):
+    """Proxy to the Ocean Depth microservice with NOAA ETOPO fallback.
+
+    Returns {"lat", "lon", "depth_m"} where depth_m is positive metres
+    below sea level, or null if the point is on land.
+    """
+    # 1. Try dedicated ocean depth microservice (port 8001)
+    try:
+        resp = http_requests.get(
+            f"{DEPTH_SERVICE_URL}/depth",
+            params={"lat": lat, "lon": lon},
+            headers={"x-api-key": DEPTH_SERVICE_API_KEY},
+            timeout=4,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data.get("depth_m"), (int, float)) and data["depth_m"] > 0:
+                return JSONResponse(data)
+    except Exception:
+        pass
+
+    # 2. High-reliability fallback: NOAA NCEI ETOPO Global Relief Model
+    noaa_depth = query_noaa_etopo_depth(lat, lon)
+    if noaa_depth is not None:
+        return JSONResponse({"lat": lat, "lon": lon, "depth_m": noaa_depth, "source": "NOAA_ETOPO"})
+
+    return JSONResponse(
+        {"lat": lat, "lon": lon, "depth_m": None, "source": "land_or_unavailable"},
+        status_code=200,
+    )
+
+
+@app.get("/api/ocean-depth/batch")
+async def proxy_ocean_depth_batch(
+    lats: str = Query(..., description="Comma-separated latitudes"),
+    lons: str = Query(..., description="Comma-separated longitudes"),
+):
+    """Batch depth lookup for multiple coordinates (used by heading probes).
+
+    Returns {"results": [{"lat", "lon", "depth_m"}, ...]}
+    """
+    lat_list = [float(x.strip()) for x in lats.split(",") if x.strip()]
+    lon_list = [float(x.strip()) for x in lons.split(",") if x.strip()]
+
+    if len(lat_list) != len(lon_list):
+        raise HTTPException(status_code=400, detail="lats and lons must have equal length")
+    if len(lat_list) > 24:
+        raise HTTPException(status_code=400, detail="Maximum 24 points per batch")
+
+    results = []
+    for lat, lon in zip(lat_list, lon_list):
+        # 1. Try microservice
+        depth_val = None
+        try:
+            resp = http_requests.get(
+                f"{DEPTH_SERVICE_URL}/depth",
+                params={"lat": lat, "lon": lon},
+                headers={"x-api-key": DEPTH_SERVICE_API_KEY},
+                timeout=2,
+            )
+            if resp.status_code == 200:
+                d = resp.json()
+                if isinstance(d.get("depth_m"), (int, float)):
+                    depth_val = d["depth_m"]
+        except Exception:
+            pass
+
+        # 2. Fallback to NOAA ETOPO
+        if depth_val is None:
+            depth_val = query_noaa_etopo_depth(lat, lon)
+
+        results.append({"lat": lat, "lon": lon, "depth_m": depth_val})
+
+    return JSONResponse({"results": results})
 
 
 if __name__ == "__main__":

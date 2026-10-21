@@ -78,6 +78,15 @@ export default function NavBar({ page = 'home', onNavigate, onClear }) {
           <button
             type="button"
             role="menuitem"
+            className={`home-nav-link ${page === 'stats' ? 'home-nav-link-active' : ''}`}
+            onClick={() => handleNav('stats')}
+            aria-current={page === 'stats' ? 'page' : undefined}
+          >
+            Analytics
+          </button>
+          <button
+            type="button"
+            role="menuitem"
             className={`home-nav-link ${page === 'about' ? 'home-nav-link-active' : ''}`}
             onClick={() => handleNav('about')}
             aria-current={page === 'about' ? 'page' : undefined}

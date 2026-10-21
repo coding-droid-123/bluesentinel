@@ -34,6 +34,10 @@ async def init():
         print("Creating/verifying database tables...")
         await conn.run_sync(Base.metadata.create_all)
 
+    # Run safe column migration for cleanup_plans
+    from migrate_db import migrate_cleanup_plans
+    await migrate_cleanup_plans()
+
     # Seed default cleanup zones if empty
     async with async_session() as session:
         result = await session.execute(select(CleanupZone))

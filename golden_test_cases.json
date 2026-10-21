@@ -1,0 +1,672 @@
+{
+  "inputs": {
+    "screenshot_1000m": {
+      "depth_m": 1000,
+      "items": {
+        "other_debris": {
+          "min": 8,
+          "max": 12
+        },
+        "trash_bag": {
+          "min": 2,
+          "max": 3
+        },
+        "clothing": {
+          "min": 1,
+          "max": 2
+        }
+      }
+    },
+    "shallow_5m": {
+      "depth_m": 5,
+      "items": {
+        "other_debris": {
+          "min": 8,
+          "max": 12
+        },
+        "trash_bag": {
+          "min": 2,
+          "max": 3
+        },
+        "clothing": {
+          "min": 1,
+          "max": 2
+        }
+      }
+    },
+    "scuba_25m_net": {
+      "depth_m": 25,
+      "items": {
+        "trash_net": {
+          "min": 1,
+          "max": 2
+        },
+        "trash_rope": {
+          "min": 2,
+          "max": 4
+        },
+        "trash_bottle": {
+          "min": 10,
+          "max": 20
+        }
+      }
+    },
+    "ssa_45m_wreck": {
+      "depth_m": 45,
+      "items": {
+        "trash_wreckage": {
+          "min": 1,
+          "max": 1
+        },
+        "trash_pipe": {
+          "min": 2,
+          "max": 4
+        }
+      }
+    },
+    "mixed_gas_75m": {
+      "depth_m": 75,
+      "items": {
+        "trash_net": {
+          "min": 2,
+          "max": 3
+        },
+        "trash_container": {
+          "min": 2,
+          "max": 3
+        }
+      }
+    },
+    "rov_150m": {
+      "depth_m": 150,
+      "items": {
+        "trash_net": {
+          "min": 1,
+          "max": 2
+        },
+        "trash_tarp": {
+          "min": 1,
+          "max": 2
+        }
+      }
+    }
+  },
+  "expected": {
+    "screenshot_1000m": {
+      "warnings": [],
+      "depth_m": 1000,
+      "item_hours": [
+        1.9,
+        5.8
+      ],
+      "debris_kg": [
+        1.84,
+        26.3
+      ],
+      "recommended": "light_work_rov",
+      "modes": [
+        {
+          "mode": "light_work_rov",
+          "kind": "robotics",
+          "crew": 4,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 150000,
+            "vessel": 40000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 414900,
+            "transit_h_per_day": 1.11,
+            "productive_h_per_day": 12
+          },
+          "max": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 300000,
+            "vessel": 150000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 726900,
+            "transit_h_per_day": 1.11,
+            "productive_h_per_day": 12
+          }
+        },
+        {
+          "mode": "work_class_rov",
+          "kind": "robotics",
+          "crew": 6,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 250000,
+            "vessel": 1000000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 1803300,
+            "transit_h_per_day": 1.11,
+            "productive_h_per_day": 20
+          },
+          "max": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 600000,
+            "vessel": 4000000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 5823300,
+            "transit_h_per_day": 1.11,
+            "productive_h_per_day": 20
+          }
+        }
+      ]
+    },
+    "shallow_5m": {
+      "warnings": [],
+      "depth_m": 5,
+      "item_hours": [
+        1.9,
+        5.8
+      ],
+      "debris_kg": [
+        1.84,
+        26.3
+      ],
+      "recommended": "compact_rov",
+      "modes": [
+        {
+          "mode": "scuba_team",
+          "kind": "human",
+          "crew": 3,
+          "risk": "medium",
+          "min": {
+            "days": 1,
+            "labour": 106000,
+            "equipment": 4500,
+            "vessel": 5000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 165900,
+            "rotations": 3,
+            "bottom_time_h": 0.75,
+            "overhead_h_per_rotation": 0.01
+          },
+          "max": {
+            "days": 2,
+            "labour": 212000,
+            "equipment": 32000,
+            "vessel": 50000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 380100,
+            "rotations": 8,
+            "bottom_time_h": 0.75,
+            "overhead_h_per_rotation": 0.01
+          }
+        },
+        {
+          "mode": "compact_rov",
+          "kind": "robotics",
+          "crew": 2,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 18000,
+            "equipment": 25000,
+            "vessel": 5000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 84900,
+            "transit_h_per_day": 0.01,
+            "productive_h_per_day": 6
+          },
+          "max": {
+            "days": 1,
+            "labour": 18000,
+            "equipment": 75000,
+            "vessel": 25000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 168900,
+            "transit_h_per_day": 0.01,
+            "productive_h_per_day": 6
+          }
+        },
+        {
+          "mode": "inspection_rov",
+          "kind": "robotics",
+          "crew": 3,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 115000,
+            "equipment": 75000,
+            "vessel": 40000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 303300,
+            "transit_h_per_day": 0.01,
+            "productive_h_per_day": 8
+          },
+          "max": {
+            "days": 1,
+            "labour": 115000,
+            "equipment": 200000,
+            "vessel": 150000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 585300,
+            "transit_h_per_day": 0.01,
+            "productive_h_per_day": 8
+          }
+        },
+        {
+          "mode": "light_work_rov",
+          "kind": "robotics",
+          "crew": 4,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 150000,
+            "vessel": 40000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 414900,
+            "transit_h_per_day": 0.01,
+            "productive_h_per_day": 12
+          },
+          "max": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 300000,
+            "vessel": 150000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 726900,
+            "transit_h_per_day": 0.01,
+            "productive_h_per_day": 12
+          }
+        },
+        {
+          "mode": "work_class_rov",
+          "kind": "robotics",
+          "crew": 6,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 250000,
+            "vessel": 1000000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 1803300,
+            "transit_h_per_day": 0.01,
+            "productive_h_per_day": 20
+          },
+          "max": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 600000,
+            "vessel": 4000000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 5823300,
+            "transit_h_per_day": 0.01,
+            "productive_h_per_day": 20
+          }
+        }
+      ]
+    },
+    "scuba_25m_net": {
+      "warnings": [],
+      "depth_m": 25,
+      "item_hours": [
+        1.9,
+        7.4
+      ],
+      "debris_kg": [
+        7.2,
+        122.0
+      ],
+      "recommended": "scuba_team",
+      "modes": [
+        {
+          "mode": "scuba_team",
+          "kind": "human",
+          "crew": 3,
+          "risk": "medium",
+          "min": {
+            "days": 1,
+            "labour": 106000,
+            "equipment": 6000,
+            "vessel": 5000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 167700,
+            "rotations": 4,
+            "bottom_time_h": 0.48,
+            "overhead_h_per_rotation": 0.12
+          },
+          "max": {
+            "days": 4,
+            "labour": 424000,
+            "equipment": 64000,
+            "vessel": 100000,
+            "mobilization": 21250,
+            "disposal": 3660,
+            "total": 735492,
+            "rotations": 16,
+            "bottom_time_h": 0.48,
+            "overhead_h_per_rotation": 0.12
+          }
+        },
+        {
+          "mode": "light_work_rov",
+          "kind": "robotics",
+          "crew": 4,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 150000,
+            "vessel": 40000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 414900,
+            "transit_h_per_day": 0.03,
+            "productive_h_per_day": 12
+          },
+          "max": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 300000,
+            "vessel": 150000,
+            "mobilization": 21250,
+            "disposal": 3660,
+            "total": 729492,
+            "transit_h_per_day": 0.03,
+            "productive_h_per_day": 12
+          }
+        },
+        {
+          "mode": "work_class_rov",
+          "kind": "robotics",
+          "crew": 6,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 250000,
+            "vessel": 1000000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 1803300,
+            "transit_h_per_day": 0.03,
+            "productive_h_per_day": 20
+          },
+          "max": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 600000,
+            "vessel": 4000000,
+            "mobilization": 21250,
+            "disposal": 3660,
+            "total": 5825892,
+            "transit_h_per_day": 0.03,
+            "productive_h_per_day": 20
+          }
+        }
+      ]
+    },
+    "ssa_45m_wreck": {
+      "warnings": [
+        "Work-class spread is disproportionate for <12 h of work: batch with other piles or defer."
+      ],
+      "depth_m": 45,
+      "item_hours": [
+        2.5,
+        7.0
+      ],
+      "debris_kg": [
+        70,
+        740
+      ],
+      "recommended": "work_class_rov",
+      "modes": [
+        {
+          "mode": "surface_supplied_air",
+          "kind": "human",
+          "crew": 4,
+          "risk": "high",
+          "min": {
+            "days": 2,
+            "labour": 302000,
+            "equipment": 80000,
+            "vessel": 80000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 581700,
+            "rotations": 4,
+            "bottom_time_h": 0.75,
+            "overhead_h_per_rotation": 0.93
+          },
+          "max": {
+            "days": 5,
+            "labour": 755000,
+            "equipment": 750000,
+            "vessel": 750000,
+            "mobilization": 21250,
+            "disposal": 22200,
+            "total": 2758140,
+            "rotations": 10,
+            "bottom_time_h": 0.75,
+            "overhead_h_per_rotation": 0.93
+          }
+        },
+        {
+          "mode": "work_class_rov",
+          "kind": "robotics",
+          "crew": 6,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 250000,
+            "vessel": 1000000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 1803300,
+            "transit_h_per_day": 0.05,
+            "productive_h_per_day": 20
+          },
+          "max": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 600000,
+            "vessel": 4000000,
+            "mobilization": 21250,
+            "disposal": 22200,
+            "total": 5848140,
+            "transit_h_per_day": 0.05,
+            "productive_h_per_day": 20
+          }
+        }
+      ]
+    },
+    "mixed_gas_75m": {
+      "warnings": [],
+      "depth_m": 75,
+      "item_hours": [
+        2.2,
+        6.3
+      ],
+      "debris_kg": [
+        20,
+        210
+      ],
+      "recommended": "light_work_rov",
+      "modes": [
+        {
+          "mode": "mixed_gas_bell",
+          "kind": "human",
+          "crew": 6,
+          "risk": "very_high",
+          "min": {
+            "days": 3,
+            "labour": 657000,
+            "equipment": 1000000,
+            "vessel": 900000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 3095700,
+            "rotations": 5,
+            "bottom_time_h": 0.5,
+            "overhead_h_per_rotation": 2.21
+          },
+          "max": {
+            "days": 7,
+            "labour": 1533000,
+            "equipment": 7780000,
+            "vessel": 7000000,
+            "mobilization": 21250,
+            "disposal": 6300,
+            "total": 19608660,
+            "rotations": 13,
+            "bottom_time_h": 0.5,
+            "overhead_h_per_rotation": 2.21
+          }
+        },
+        {
+          "mode": "light_work_rov",
+          "kind": "robotics",
+          "crew": 4,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 150000,
+            "vessel": 40000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 414900,
+            "transit_h_per_day": 0.08,
+            "productive_h_per_day": 12
+          },
+          "max": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 300000,
+            "vessel": 150000,
+            "mobilization": 21250,
+            "disposal": 6300,
+            "total": 732660,
+            "transit_h_per_day": 0.08,
+            "productive_h_per_day": 12
+          }
+        },
+        {
+          "mode": "work_class_rov",
+          "kind": "robotics",
+          "crew": 6,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 250000,
+            "vessel": 1000000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 1803300,
+            "transit_h_per_day": 0.08,
+            "productive_h_per_day": 20
+          },
+          "max": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 600000,
+            "vessel": 4000000,
+            "mobilization": 21250,
+            "disposal": 6300,
+            "total": 5829060,
+            "transit_h_per_day": 0.08,
+            "productive_h_per_day": 20
+          }
+        }
+      ]
+    },
+    "rov_150m": {
+      "warnings": [],
+      "depth_m": 150,
+      "item_hours": [
+        1.2,
+        4.6
+      ],
+      "debris_kg": [
+        7,
+        100
+      ],
+      "recommended": "light_work_rov",
+      "modes": [
+        {
+          "mode": "light_work_rov",
+          "kind": "robotics",
+          "crew": 4,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 150000,
+            "vessel": 40000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 414900,
+            "transit_h_per_day": 0.17,
+            "productive_h_per_day": 12
+          },
+          "max": {
+            "days": 1,
+            "labour": 133000,
+            "equipment": 300000,
+            "vessel": 150000,
+            "mobilization": 21250,
+            "disposal": 3000,
+            "total": 728700,
+            "transit_h_per_day": 0.17,
+            "productive_h_per_day": 12
+          }
+        },
+        {
+          "mode": "work_class_rov",
+          "kind": "robotics",
+          "crew": 6,
+          "risk": "low",
+          "min": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 250000,
+            "vessel": 1000000,
+            "mobilization": 21250,
+            "disposal": 1500,
+            "total": 1803300,
+            "transit_h_per_day": 0.17,
+            "productive_h_per_day": 20
+          },
+          "max": {
+            "days": 1,
+            "labour": 230000,
+            "equipment": 600000,
+            "vessel": 4000000,
+            "mobilization": 21250,
+            "disposal": 3000,
+            "total": 5825100,
+            "transit_h_per_day": 0.17,
+            "productive_h_per_day": 20
+          }
+        }
+      ]
+    }
+  }
+}

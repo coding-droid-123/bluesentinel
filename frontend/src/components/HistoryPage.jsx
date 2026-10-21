@@ -116,6 +116,7 @@ export default function HistoryPage({ onNavigate }) {
     onNavigate('optimizer', {
       source: 'history',
       pileId: entry.label || `Scan ${entry.id}`,
+      depth: entry.depth || entry.seafloor_depth_m || entry.seafloorDepthMeters || null,
       inventory: entry.inventory && entry.inventory.length > 0
         ? entry.inventory
         : [

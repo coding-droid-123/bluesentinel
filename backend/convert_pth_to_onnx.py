@@ -25,9 +25,9 @@ except ImportError:
 import onnxruntime as ort
 from engine.core import YAMLConfig
 
-DEFAULT_CONFIG = REPO_DIR / "configs" / "dfine" / "dfine_hgnetv2_l_trashcan.yml"
-DEFAULT_CKPT = BACKEND_DIR / "weights" / "best.pth"
-DEFAULT_OUTPUT = BACKEND_DIR / "weights" / "best.onnx"
+DEFAULT_CONFIG = REPO_DIR / "configs" / "dfine" / "dfine_hgnetv2_s_trashcan.yml"
+DEFAULT_CKPT = BACKEND_DIR / "weights" / "best_stg2.pth"
+DEFAULT_OUTPUT = BACKEND_DIR / "weights" / "best_s.onnx"
 
 
 class ExportWrapper(nn.Module):

@@ -109,6 +109,10 @@ class SurveyMission(Base):
     hotspots = relationship("DebrisHotspot", back_populates="mission", cascade="all, delete-orphan")
 
     def to_dict(self):
+        inc_count = 0
+        if "incidents" in self.__dict__ and self.incidents is not None:
+            inc_count = len(self.incidents)
+
         return {
             "id": str(self.id),
             "name": self.name,
@@ -120,7 +124,7 @@ class SurveyMission(Base):
             "avg_latency_ms": self.avg_latency_ms,
             "summary_by_class": self.summary_by_class or {},
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "incident_count": len(self.incidents) if self.incidents else 0,
+            "incident_count": inc_count,
         }
 
 
@@ -239,6 +243,14 @@ class CleanupPlan(Base):
     required_equipment = Column(JSONB, default=list)  # ["cutters", "lift bags"]
     estimated_min_cost = Column(Float, nullable=False)
     estimated_max_cost = Column(Float, nullable=False)
+    cost_min = Column(Float, nullable=True)
+    cost_max = Column(Float, nullable=True)
+    mode = Column(String, nullable=True, default="compact_rov")
+    crew = Column(JSONB, default=dict)
+    depth_source = Column(String, nullable=True, default="simulated")  # bathymetry | simulated
+    assumptions_version = Column(String, nullable=True)
+    breakdown = Column(JSONB, default=dict)
+    warnings = Column(JSONB, default=list)
     dispatch_status = Column(String, default="draft")  # draft, approved, dispatched, completed
     created_at = Column(
         DateTime(timezone=True),
@@ -249,17 +261,32 @@ class CleanupPlan(Base):
     zone = relationship("CleanupZone", back_populates="plans")
 
     def to_dict(self):
+        zone_name = None
+        if "zone" in self.__dict__ and self.zone is not None:
+            zone_name = self.zone.name
+
+        c_min = self.cost_min if self.cost_min is not None else self.estimated_min_cost
+        c_max = self.cost_max if self.cost_max is not None else self.estimated_max_cost
+
         return {
             "id": str(self.id),
             "zone_id": str(self.zone_id),
-            "zone_name": self.zone.name if self.zone else None,
+            "zone_name": zone_name,
             "priority_rank": self.priority_rank,
             "estimated_min_hours": self.estimated_min_hours,
             "estimated_max_hours": self.estimated_max_hours,
             "max_crew_required": self.max_crew_required,
             "required_equipment": self.required_equipment or [],
-            "estimated_min_cost": self.estimated_min_cost,
-            "estimated_max_cost": self.estimated_max_cost,
+            "estimated_min_cost": c_min,
+            "estimated_max_cost": c_max,
+            "cost_min": c_min,
+            "cost_max": c_max,
+            "mode": self.mode,
+            "crew": self.crew or {},
+            "depth_source": self.depth_source,
+            "assumptions_version": self.assumptions_version,
+            "breakdown": self.breakdown or {},
+            "warnings": self.warnings or [],
             "dispatch_status": self.dispatch_status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }

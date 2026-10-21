@@ -8,8 +8,8 @@ train_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: /kaggle/input/datasets/gurruvigneshyadav/trashcan-coco/instance_version/train/
-    ann_file: /kaggle/working/instance_0/instances_train_0idx.json
+    img_folder: C:/Users/user/Desktop/dataset/instance_version/train/images/
+    ann_file: C:/Users/user/Desktop/instances_train_0idx.json
     return_masks: False
     transforms:
       type: Compose
@@ -23,7 +23,7 @@ val_dataloader:
   type: DataLoader
   dataset:
     type: CocoDetection
-    img_folder: C:/Users/user/Desktop/instance_version/images/
+    img_folder: C:/Users/user/Desktop/dataset/instance_version/val/images/
     ann_file: C:/Users/user/Desktop/instances_val_0idx.json
     return_masks: False
     transforms:

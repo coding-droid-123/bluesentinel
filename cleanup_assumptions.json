@@ -1,0 +1,494 @@
+{
+  "_notes": [
+    "Planning/budgeting estimates ONLY. Never use for dive planning; decompression figures are budgeting placeholders.",
+    "no_deco_table_min: indicative no-decompression limits (recreational-table style, unverified), for budgeting only. Bottom time = min(table limit, 45 min), where 45 min is the working-window cap applied on top of the dive table limit (at 10 m the table yields 219 min).",
+    "verified=true: grounded in a source seen while building this. verified=false: assumption, replace with contractor quotes."
+  ],
+  "global": {
+    "shift_hours": 10,
+    "contingency_pct": 0.2,
+    "mobilization_base_inr": 15000,
+    "transit_cost_per_km_inr": 250,
+    "default_distance_km": 25,
+    "prefer_robotics_beyond_m": 40,
+    "hard_max_human_depth_m": 100,
+    "disposal_inr_per_kg": [
+      8,
+      30
+    ],
+    "disposal_min_inr": 1500
+  },
+  "role_rates_inr_per_hr": {
+    "dive_supervisor": 4500,
+    "lead_diver": 5000,
+    "standby_diver": 3800,
+    "tender": 1800,
+    "rov_pilot": 4500,
+    "rov_copilot": 3800,
+    "rov_engineer": 3200
+  },
+  "debris_classes": {
+    "trash_net": {
+      "h": [
+        0.8,
+        1.5
+      ],
+      "kg": [
+        5,
+        40
+      ],
+      "tools": [
+        "cutters",
+        "lift bags"
+      ]
+    },
+    "trash_rope": {
+      "h": [
+        0.3,
+        0.6
+      ],
+      "kg": [
+        1,
+        10
+      ],
+      "tools": [
+        "cutters"
+      ]
+    },
+    "trash_tarp": {
+      "h": [
+        0.4,
+        0.8
+      ],
+      "kg": [
+        2,
+        10
+      ],
+      "tools": [
+        "lift bags"
+      ]
+    },
+    "trash_pipe": {
+      "h": [
+        0.5,
+        1.0
+      ],
+      "kg": [
+        10,
+        60
+      ],
+      "tools": [
+        "lift bags"
+      ]
+    },
+    "trash_wreckage": {
+      "h": [
+        1.5,
+        3.0
+      ],
+      "kg": [
+        50,
+        500
+      ],
+      "tools": [
+        "lift bags",
+        "hydraulic cutting tools"
+      ]
+    },
+    "trash_bag": {
+      "h": [
+        0.1,
+        0.2
+      ],
+      "kg": [
+        0.02,
+        0.1
+      ],
+      "tools": [
+        "collection sacks"
+      ]
+    },
+    "trash_bottle": {
+      "h": [
+        0.05,
+        0.1
+      ],
+      "kg": [
+        0.02,
+        0.1
+      ],
+      "tools": [
+        "collection sacks"
+      ]
+    },
+    "trash_container": {
+      "h": [
+        0.3,
+        0.6
+      ],
+      "kg": [
+        5,
+        30
+      ],
+      "tools": [
+        "collection sacks"
+      ]
+    },
+    "other_debris": {
+      "h": [
+        0.2,
+        0.4
+      ],
+      "kg": [
+        0.2,
+        2
+      ],
+      "tools": [
+        "collection sacks"
+      ]
+    },
+    "clothing": {
+      "h": [
+        0.1,
+        0.2
+      ],
+      "kg": [
+        0.2,
+        1
+      ],
+      "tools": [
+        "collection sacks"
+      ]
+    },
+    "unknown": {
+      "h": [
+        0.2,
+        0.5
+      ],
+      "kg": [
+        0.5,
+        5
+      ],
+      "tools": [
+        "collection sacks"
+      ]
+    }
+  },
+  "no_deco_table_min": [
+    [
+      10,
+      219
+    ],
+    [
+      12,
+      147
+    ],
+    [
+      14,
+      98
+    ],
+    [
+      16,
+      72
+    ],
+    [
+      18,
+      56
+    ],
+    [
+      20,
+      45
+    ],
+    [
+      22,
+      37
+    ],
+    [
+      25,
+      29
+    ],
+    [
+      30,
+      20
+    ],
+    [
+      35,
+      14
+    ],
+    [
+      40,
+      9
+    ]
+  ],
+  "modes": {
+    "scuba_team": {
+      "kind": "human",
+      "depth_m": [
+        0,
+        40
+      ],
+      "roles": [
+        "lead_diver",
+        "standby_diver",
+        "tender"
+      ],
+      "bottom_time_h": "min(table limit, 45 min)",
+      "working_divers": 2,
+      "max_rot_per_diver_day": 2,
+      "descent_m_per_min": 18,
+      "ascent_m_per_min": 9,
+      "safety_stop_min": 3,
+      "deco_h_per_rotation": [
+        [
+          30,
+          0.0
+        ],
+        [
+          40,
+          0.1
+        ]
+      ],
+      "equipment_inr_per_rotation": [
+        1500,
+        4000
+      ],
+      "spread_inr_per_day": [
+        0,
+        0
+      ],
+      "vessel_inr_per_day": [
+        5000,
+        25000
+      ],
+      "gas_inr_per_rotation": [
+        0,
+        0
+      ],
+      "max_item_kg": 200,
+      "risk": "medium",
+      "verified": {
+        "equipment_inr_per_rotation": true,
+        "vessel_inr_per_day": true,
+        "no_deco_table_min": false
+      }
+    },
+    "surface_supplied_air": {
+      "kind": "human",
+      "depth_m": [
+        30,
+        50
+      ],
+      "roles": [
+        "dive_supervisor",
+        "lead_diver",
+        "standby_diver",
+        "tender"
+      ],
+      "bottom_time_h": 0.75,
+      "working_divers": 1,
+      "max_rot_per_diver_day": 2,
+      "descent_m_per_min": 18,
+      "ascent_m_per_min": 9,
+      "safety_stop_min": 3,
+      "deco_h_per_rotation": [
+        [
+          40,
+          0.1
+        ],
+        [
+          50,
+          0.75
+        ]
+      ],
+      "equipment_inr_per_rotation": [
+        0,
+        0
+      ],
+      "spread_inr_per_day": [
+        40000,
+        150000
+      ],
+      "vessel_inr_per_day": [
+        40000,
+        150000
+      ],
+      "gas_inr_per_rotation": [
+        0,
+        0
+      ],
+      "max_item_kg": 500,
+      "risk": "high",
+      "verified": {
+        "depth_m": true
+      }
+    },
+    "mixed_gas_bell": {
+      "kind": "human",
+      "depth_m": [
+        50,
+        100
+      ],
+      "roles": [
+        "dive_supervisor",
+        "lead_diver",
+        "lead_diver",
+        "standby_diver",
+        "tender",
+        "tender"
+      ],
+      "bottom_time_h": 0.5,
+      "working_divers": 2,
+      "max_rot_per_diver_day": 1,
+      "descent_m_per_min": 18,
+      "ascent_m_per_min": 9,
+      "safety_stop_min": 0,
+      "deco_h_per_rotation": [
+        [
+          75,
+          2.0
+        ],
+        [
+          100,
+          4.0
+        ]
+      ],
+      "equipment_inr_per_rotation": [
+        0,
+        0
+      ],
+      "spread_inr_per_day": [
+        300000,
+        1000000
+      ],
+      "vessel_inr_per_day": [
+        300000,
+        1000000
+      ],
+      "gas_inr_per_rotation": [
+        20000,
+        60000
+      ],
+      "max_item_kg": 1000,
+      "risk": "very_high",
+      "verified": {
+        "depth_m": true
+      }
+    },
+    "compact_rov": {
+      "kind": "robotics",
+      "depth_m": [
+        0,
+        100
+      ],
+      "roles": [
+        "rov_pilot",
+        "tender"
+      ],
+      "labour_excluded_roles": [
+        "rov_pilot"
+      ],
+      "max_item_kg": 5,
+      "productive_h_per_day": 6,
+      "descent_m_per_min": 30,
+      "spread_inr_per_day": [
+        25000,
+        75000
+      ],
+      "vessel_inr_per_day": [
+        5000,
+        25000
+      ],
+      "risk": "low",
+      "verified": {
+        "depth_m": true,
+        "spread_inr_per_day": true,
+        "vessel_inr_per_day": true
+      }
+    },
+    "inspection_rov": {
+      "kind": "robotics",
+      "depth_m": [
+        0,
+        300
+      ],
+      "max_item_kg": 25,
+      "roles": [
+        "rov_pilot",
+        "rov_copilot",
+        "rov_engineer"
+      ],
+      "productive_h_per_day": 8,
+      "descent_m_per_min": 30,
+      "spread_inr_per_day": [
+        75000,
+        200000
+      ],
+      "vessel_inr_per_day": [
+        40000,
+        150000
+      ],
+      "risk": "low",
+      "verified": {
+        "depth_m": true
+      }
+    },
+    "light_work_rov": {
+      "kind": "robotics",
+      "depth_m": [
+        0,
+        1000
+      ],
+      "roles": [
+        "rov_pilot",
+        "rov_copilot",
+        "rov_engineer",
+        "tender"
+      ],
+      "max_item_kg": 100,
+      "productive_h_per_day": 12,
+      "descent_m_per_min": 30,
+      "spread_inr_per_day": [
+        150000,
+        300000
+      ],
+      "vessel_inr_per_day": [
+        40000,
+        150000
+      ],
+      "risk": "low",
+      "verified": {
+        "depth_m": true
+      }
+    },
+    "work_class_rov": {
+      "kind": "robotics",
+      "depth_m": [
+        0,
+        3000
+      ],
+      "max_item_kg": 1000,
+      "roles": [
+        "rov_pilot",
+        "rov_pilot",
+        "rov_copilot",
+        "rov_copilot",
+        "rov_engineer",
+        "rov_engineer"
+      ],
+      "productive_h_per_day": 20,
+      "descent_m_per_min": 30,
+      "spread_inr_per_day": [
+        250000,
+        600000
+      ],
+      "vessel_inr_per_day": [
+        1000000,
+        4000000
+      ],
+      "risk": "low",
+      "verified": {
+        "depth_m": true
+      }
+    }
+  }
+}

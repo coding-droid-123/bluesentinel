@@ -30,20 +30,60 @@ SQLITE_URL = f"sqlite+aiosqlite:///{SQLITE_PATH}"
 _use_postgres = False
 
 def _check_pg_sync() -> bool:
-    """Quick TCP connect test to PostgreSQL port."""
+    """Quick TCP connect test to PostgreSQL port.
+    If unreachable, attempts to connect to Docker Desktop to auto-start the bluesentinel-db container.
+    """
     import socket
-    try:
-        s = socket.create_connection(("127.0.0.1", 5432), timeout=0.5)
-        s.close()
+    import subprocess
+    import time
+
+    def _probe() -> bool:
+        try:
+            s = socket.create_connection(("127.0.0.1", 5432), timeout=0.5)
+            s.close()
+            return True
+        except (OSError, ConnectionRefusedError):
+            return False
+
+    if _probe():
         return True
-    except (OSError, ConnectionRefusedError):
-        return False
+
+    # Attempt to auto-start via Docker Desktop
+    print("[DB] PostgreSQL port 5432 not open. Checking Docker Desktop...")
+    try:
+        compose_file = BACKEND_DIR / "docker-compose.yml"
+        if compose_file.exists():
+            proc = subprocess.run(
+                ["docker", "compose", "-f", str(compose_file), "up", "-d", "db"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=12,
+            )
+        else:
+            proc = subprocess.run(
+                ["docker", "start", "bluesentinel-db"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=8,
+            )
+
+        if proc.returncode == 0:
+            print("[DB] Auto-launched bluesentinel-db container via Docker Desktop. Awaiting readiness...")
+            for _ in range(12):
+                time.sleep(0.5)
+                if _probe():
+                    print("[DB] Successfully auto-connected to PostgreSQL in Docker Desktop!")
+                    return True
+    except Exception as e:
+        print(f"[DB] Docker Desktop connection check: {e}")
+
+    return False
 
 _use_postgres = _check_pg_sync()
 
 if _use_postgres:
     DATABASE_URL = POSTGRES_URL
-    print(f"[DB] PostgreSQL detected on localhost:5432 — using asyncpg")
+    print(f"[DB] PostgreSQL detected on localhost:5432 (Docker Desktop) — using asyncpg")
 else:
     DATABASE_URL = SQLITE_URL
     print(f"[DB] PostgreSQL unreachable — falling back to SQLite: {SQLITE_PATH}")

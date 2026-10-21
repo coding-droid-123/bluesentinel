@@ -7,13 +7,14 @@ import UploadPage from './components/UploadPage'
 import ROVSimulator from './components/ROVSimulator'
 import CleanupOptimizer from './components/CleanupOptimizer'
 import HistoryPage from './components/HistoryPage'
+import StatsPage from './components/StatsPage'
 import { addHistoryRecord } from './hooks/useHistory'
 import { API_BASE_URL } from './config'
 
 const PALETTE = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#ea580c']
 
 function App() {
-  // pages: 'home' | 'about' | 'dashboard' | 'rov' | 'optimizer' | 'history'
+  // pages: 'home' | 'about' | 'dashboard' | 'rov' | 'optimizer' | 'history' | 'stats'
   const [page, setPage] = useState(() => {
     try {
       const saved = sessionStorage.getItem('bluesentinel_session_page')
@@ -229,6 +230,11 @@ function App() {
       {/* 7. About Page */}
       <div style={{ display: page === 'about' ? 'block' : 'none', width: '100%' }}>
         <AboutPage onNavigate={handleNavigate} />
+      </div>
+
+      {/* 8. Analytics Stats Dashboard */}
+      <div style={{ display: page === 'stats' ? 'block' : 'none', width: '100%' }}>
+        <StatsPage onNavigate={handleNavigate} />
       </div>
     </div>
   )

@@ -786,4 +786,42 @@ Table 2 of `BlueSentinel.pdf` isolates the individual and joint contributions of
 | **Data Persistence** | None (ephemeral batch execution) | PostgreSQL 18 with `pgvector` for spatial-relational history and vector search |
 | **User Interface** | None | Modern React 19 + Tailwind CSS v4 dashboard with canvas overlays & telemetry |
 | **Reporting** | Matplotlib visualization figures | Automated PDF environmental audit export (`html2canvas` + `jsPDF`) + Ollama Llama-3.1 synthesis |
+| **Decision Support & Logistics** | None (pure detection benchmark) | Parametric Multi-Mode Cleanup Optimizer (`cleanup_optimizer.py` & `CleanupOptimizer.jsx`) |
+
+---
+
+## 15. Subsea Cleanup Logistics & Budget Optimization Engine
+
+### A. Operational Depth Tiers & Boundaries
+1. **Commercial Diver Tiers (0–100m, Application Scope Limit):**
+   - **Scuba Team (0–40m):** 3 Crew (Lead Diver, Safety Standby, Tender), indicative no-decompression limits (recreational-table style, unverified) where $\text{bottom time} = \min(\text{table limit}, 45\text{ min})$ with a 45-min working-window cap applied on top (at 10 m the table yields 219 min), dual working divers.
+   - **Surface-Supplied Air (30–50m):** 4 Crew (Supervisor, Lead, Standby, Tender), continuous air umbilical spread, stage decompression.
+   - **Mixed-Gas Bell (50–100m):** 6 Crew, closed wet/dry diving bell, Trimix/Heliox reclaim spread, deck decompression chamber.
+   - *Scope Limit Clarification:* Human operations are subject to a configurable application scope limit $z \le d_{\text{human}}^{\max} = 100\text{ m}$. While commercial saturation diving operates deeper, 100 m represents the operational scope boundary chosen for this platform, prioritizing robotics for deep subsea intervention.
+2. **Subsea Robotics Tiers (0–3000m):**
+   - **Compact ROV (0–100m):** 2 Crew (Pilot, Tender), payload $\le 5$ kg.
+   - **Inspection-Class ROV (0–300m):** 3 Crew (Pilot, Co-Pilot, Engineer), Tether Management System (TMS), payload $\le 25$ kg.
+   - **Light Work-Class ROV (0–1000m):** 4 Crew, 5-function hydraulic manipulator, payload $\le 100$ kg.
+   - **Heavy Work-Class ROV (0–3000m):** 6 Crew (dual shifts), dual 7-function manipulators, LARS, payload $\le 1000$ kg.
+   - **Beyond 3000m:** Categorized as **Out of Scope**.
+
+### B. Mathematical Formulations
+$$\text{Hours} = \left[ \sum_{i} h_{i,\min} \cdot \text{Count}_{i,\min}, \quad \sum_{i} h_{i,\max} \cdot \text{Count}_{i,\max} \right]$$
+$$\text{Mass} = \left[ \sum_{i} m_{i,\min} \cdot \text{Count}_{i,\min}, \quad \sum_{i} m_{i,\max} \cdot \text{Count}_{i,\max} \right]$$
+$$\text{Rotations} = \left\lceil \frac{\text{Hours}}{t_{\text{bt}}(z)} \right\rceil, \quad \text{Days} = \max\left(1, \left\lceil \frac{\text{Rotations}}{N_{\text{divers}} \cdot \text{Rot}_{\text{day}}^{\max}} \right\rceil\right)$$
+$$\text{Days}_{\text{ROV}} = \max\left(1, \left\lceil \frac{\text{Hours}}{t_{\text{eff}}} \right\rceil\right)$$
+$$\text{Cost}_{\text{total}} = (\text{Labour} + \text{Equipment} + \text{Vessel} + \text{Mobilization} + \text{Disposal}) \times (1 + \alpha_{\text{contingency}})$$
+
+### C. Worked Example (1000m Depth — `screenshot_1000m`)
+For an inventory of 8–12 other debris items (`other_debris`), 2–3 plastic bags (`trash_bag`), and 1–2 clothing items (`clothing`) at 1000 m:
+1. **Debris Inventory & Mass:** Total labor demand is 1.9–5.8 h, total debris mass is 1.8–26.3 kg (recomputed directly from `cleanup_assumptions.json`: $\min = 8(0.2) + 2(0.02) + 1(0.2) = 1.84\text{ kg} \approx 1.8\text{ kg}$; $\max = 12(2.0) + 3(0.1) + 2(1.0) = 26.3\text{ kg}$), with a peak item mass of 2.0 kg.
+2. **Feasibility:**
+   - Commercial Human Divers: Disqualified (depth 1000 m exceeds 100 m application scope limit).
+   - Compact ROV & Inspection ROV: Disqualified (depth 1000 m exceeds 100 m and 300 m ratings).
+   - Light Work-Class ROV (0–1000 m, payload $\le 100\text{ kg}$) & Heavy Work-Class ROV (0–3000 m, payload $\le 1000\text{ kg}$): Feasible.
+3. **Cost Allocation:**
+   - `light_work_rov`: 4 crew personnel, 1 day operation $\to$ **₹414,900 – ₹726,900**.
+   - `work_class_rov`: 6 crew personnel, DP2 support vessel spread $\to$ **₹1,803,300 – ₹5,823,300**.
+4. **Optimal Recommendation & Cost Savings:** `light_work_rov` is selected as the optimal recommendation, realizing operational savings of about **₹14–51 lakh** (specifically ₹1,388,400 to ₹5,096,400 savings; light work-class vs work-class).
+
 
